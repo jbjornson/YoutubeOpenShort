@@ -1,21 +1,110 @@
 # YouTube Open Short
 
-YouTube Open Short is a Google Chrome extension that adds a button to YouTube Shorts. This button allows you to open the short in a new tab as a regular video. With this extension, you can easily watch YouTube Shorts without the vertical video format and without the need to use the YouTube app. Simply click the button and enjoy the short in a new tab!
+Adds an **Open** button on YouTube Shorts that opens the current short as a regular watch URL (`/watch?v=...`) in a new tab.
+
+On regular **watch** pages, adds a **playback speed slider** in the player control bar (left of the settings cog). Drag to any speed from 1.0× to 2.0× in 0.05 steps, with preset ticks at 1.0, 1.25, 1.5, 1.75, and 2.0. Each tab starts at 1.0×; your chosen speed applies to other videos in the same tab only.
+
+Works in **Google Chrome**, **Dia**, and other Chromium-based browsers that support Manifest V3 extensions.
+
+**Current version:** 0.5.0
 
 ## Installation
 
-To install the extension, follow these steps:
+### Chrome / Dia / Edge / Brave
 
-1. Download the extension from the [Chrome Web Store](https://chrome.google.com/webstore/detail/youtube-shorts-as-video/chmlaghpdpffekheddamojfbijpbllpm).
+1. Clone or download this repository.
+2. Open your browser’s extensions page:
+   - Chrome: `chrome://extensions`
+   - **Dia: `dia://extensions`**
+3. Enable **Developer mode**.
+4. Click **Load unpacked** and select the **`extension`** folder (not the repo root).
+5. Open any YouTube Short (e.g. `https://www.youtube.com/shorts/VIDEO_ID`).
+6. Click **Open** at the top of the Shorts action column (above Like).
 
-2. Click "Add to Chrome" to install the extension.
+On a regular video (`https://www.youtube.com/watch?v=VIDEO_ID`), use the speed slider in the player bar to change playback speed without opening Settings.
 
-3. Once the extension is installed, you should see a new button on YouTube Shorts.
+### Firefox
+
+1. In the `extension` folder, copy `manifest.json.firefox` over `manifest.json`.
+2. Load the **`extension`** folder as a temporary add-on from `about:debugging`.
+
+## Project layout
+
+```
+YoutubeOpenShort/
+  extension/          ← Load unpacked (manifest, scripts, icons)
+  scripts/            ← dev tests and icon build
+  package.json        ← dev dependencies only
+  README.md
+```
+
+## Development
+
+```bash
+npm install
+npm run test:shorts    # Playwright mount smoke test (partial; loads extension/)
+npm run test:watch     # Playwright watch-page speed slider smoke test
+npm run build:icons    # Regenerate PNGs from extension/icons/icon.svg
+```
+
+To package a release zip:
+
+```bash
+cd extension && zip -r ../YoutubeOpenShort.zip .
+```
+
+### Debugging
+
+On a Shorts or watch page, open DevTools and filter the console for `YoutubeOpenShort`, or run:
+
+```javascript
+__youtubeOpenShortDumpState()
+```
+
+Disable verbose logging: `localStorage.setItem('youtube-open-short-debug', '0')`
+
+## Changelog
+
+### 0.5.0
+
+- Playback speed slider on regular watch pages, mounted in the player control bar.
+- Preset ticks at 1.0, 1.25, 1.5, 1.75, and 2.0; manual selection in 0.05 increments from 1.0 to 2.0.
+- Speed is scoped to the current tab (new tabs/windows always start at 1.0×).
+
+### 0.4.0
+
+- Extension sources moved to `extension/` so **Load unpacked** does not include `node_modules` or test artifacts.
+- Added toolbar icons (YouTube-style red rounded square with white external-link glyph).
+
+### 0.3.5
+
+- “Open” label styling synced with native Shorts action captions.
+
+### 0.3.4
+
+- Mounts next to the visible Like control instead of a hidden `#buttons` container.
+- Added `content.css` for reliable button layout on desktop Shorts.
+
+### 0.3.3
+
+- Console diagnostics (`[YoutubeOpenShort]` logs and `__youtubeOpenShortDumpState()`).
+
+### 0.3.2
+
+- Shorts action bar view-model and shadow DOM support; mounts above Like with fallbacks for older layouts.
+
+### 0.3.1
+
+- Targets `#buttons` inside `ytd-reel-player-overlay-renderer` (replacing `#actions`).
+
+### 0.3.0
+
+- Multiple mount fallbacks for YouTube SPA navigation (`reel-active`, mutation observers, gesture-safe link click).
 
 ## Issues and suggestions
 
-If you encounter any bugs or issues while using the extension, please feel free to open a pull request. Any feedback is very appreciated!
+Bug reports and pull requests are welcome on [GitHub](https://github.com/OtterBoops/YoutubeOpenShort).
 
 ## License
 
-This extension is licensed under the MIT License, which means that anyone can use, modify, and distribute the code as long as they give credit to the original author. If you would like to port this extension to Firefox or any other browser, you are free to do so as long as you credit the original author and follow the terms of the MIT License. A firefox manifest has been provided, which details the minimum version of the browser needed to run v3 manifests.
+MIT License — see repository for details.

@@ -4,7 +4,7 @@
   if (window.__youtubeOpenShortLoaded) return;
   window.__youtubeOpenShortLoaded = true;
 
-  const VERSION = '0.8.1';
+  const VERSION = '0.9.0';
   const LOG_PREFIX = '[YoutubeOpenShort]';
   const BUTTON_ID = 'youtube-open-short-button';
   const FLOATING_CLASS = 'youtube-open-short-floating';
@@ -14,6 +14,8 @@
   const SPEED_STEP = 0.05;
   const SPEED_TICK = 0.25;
   const SPEED_PRESETS = [0.5, 1.0, 1.25, 1.5, 1.75, 2.0];
+  // storage.sync key for the starting speed chosen on the Options page.
+  const DEFAULT_SPEED_KEY = 'defaultSpeed';
 
   // Widget order inside the shared floating bar.
   const ORDER_OPEN = 1;
@@ -348,6 +350,21 @@
     }
   }
 
+  /** The starting speed saved on the Options page, or 1 when unset or unavailable. */
+  async function loadDefaultSpeed() {
+    // Firefox's promise-based `browser` namespace first; Chrome MV3's `chrome` also returns promises.
+    const storage = globalThis.browser?.storage?.sync ?? globalThis.chrome?.storage?.sync;
+    if (!storage) return 1;
+    try {
+      const stored = await storage.get(DEFAULT_SPEED_KEY);
+      const rate = Number(stored?.[DEFAULT_SPEED_KEY]);
+      return Number.isFinite(rate) ? clampSpeed(rate) : 1;
+    } catch (err) {
+      log('warn', 'could not read default speed', { error: String(err) });
+      return 1;
+    }
+  }
+
   function speedToPercent(rate) {
     return ((clampSpeed(rate) - SPEED_MIN) / (SPEED_MAX - SPEED_MIN)) * 100;
   }
@@ -362,6 +379,7 @@
       const tick = document.createElement('span');
       tick.className = 'youtube-open-short-speed-tick';
       if (SPEED_PRESETS.includes(value)) tick.classList.add('youtube-open-short-speed-tick--preset');
+      if (value === 1) tick.classList.add('youtube-open-short-speed-tick--unity');
       tick.style.left = `${speedToPercent(value)}%`;
       tick.setAttribute('aria-hidden', 'true');
       container.appendChild(tick);
@@ -377,7 +395,6 @@
 
     const readout = document.createElement('span');
     readout.className = 'youtube-open-short-speed-readout';
-    readout.textContent = '1×';
 
     const sliderId = `${SPEED_CONTROL_ID}-slider`;
     const listId = `${SPEED_CONTROL_ID}-presets`;
@@ -388,7 +405,6 @@
     slider.min = String(SPEED_MIN);
     slider.max = String(SPEED_MAX);
     slider.step = String(SPEED_STEP);
-    slider.value = '1';
     slider.setAttribute('list', listId);
     slider.setAttribute('aria-label', 'Playback speed');
 
@@ -694,7 +710,7 @@
     return entries.some((entry) => matcher.hostMatches(location.hostname, entry.hosts));
   }
 
-  function init() {
+  async function init() {
     log('log', `content script loaded v${VERSION}`, {
       readyState: document.readyState,
       url: location.href,
@@ -709,6 +725,8 @@
       log('log', 'host not configured; idle', { hostname: location.hostname });
       return;
     }
+
+    preferredSpeed = await loadDefaultSpeed();
 
     dumpState();
     mountButton();

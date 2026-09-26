@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Shorts &amp; Reels as Video — Options</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      margin: 0;
+      padding: 16px 20px;
+      min-width: 320px;
+      font: 14px/1.4 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    }
+    h1 { margin: 0 0 12px; font-size: 15px; font-weight: 600; }
+    label { display: block; margin-bottom: 6px; }
+    .row { display: flex; align-items: center; gap: 12px; }
+    .readout { min-width: 3.5em; font-variant-numeric: tabular-nums; font-weight: 600; }
+    .slider-wrap { position: relative; flex: 1 1 auto; display: flex; align-items: center; height: 20px; }
+    .ticks { position: absolute; left: 8px; right: 8px; top: 50%; pointer-events: none; }
+    .tick {
+      position: absolute;
+      width: 1px;
+      height: 6px;
+      margin-top: -3px;
+      margin-left: -0.5px;
+      background: currentColor;
+      opacity: 0.4;
+    }
+    .tick--preset { height: 8px; margin-top: -4px; opacity: 0.65; }
+    .tick--unity { width: 2px; height: 14px; margin-top: -7px; margin-left: -1px; opacity: 1; }
+    input[type='range'] { position: relative; z-index: 1; width: 100%; margin: 0; }
+    .hint { margin: 10px 0 0; opacity: 0.7; font-size: 12px; }
+    .actions { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+    .status { font-size: 12px; opacity: 0; transition: opacity 0.2s; }
+    .status.visible { opacity: 0.8; }
+  </style>
+</head>
+<body>
+  <h1>Playback speed</h1>
+  <label for="default-speed">Default speed for new videos</label>
+  <div class="row">
+    <span class="readout" id="readout">1×</span>
+    <div class="slider-wrap">
+      <div class="ticks" id="ticks"></div>
+      <input type="range" id="default-speed" min="0.5" max="2" step="0.05" value="1">
+    </div>
+  </div>
+  <div class="actions">
+    <button type="button" id="reset">Reset to 1×</button>
+    <span class="status" id="status" role="status">Saved</span>
+  </div>
+  <p class="hint">Each tab starts at this speed. Moving the in-player slider changes the current tab only.</p>
+  <script src="options.js"></script>
+</body>
+</html>

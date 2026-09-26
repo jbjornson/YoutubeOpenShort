@@ -58,13 +58,14 @@ function expect(label, actual, want) {
   }
 }
 
-async function open(browser, url, body) {
+async function open(browser, url, body, prelude) {
   const page = await browser.newPage();
   await page.route('**/*', (route) =>
     route.fulfill({ status: 200, contentType: 'text/html', body: `<!doctype html><html>${body}</html>` })
   );
   await page.goto(url);
   await page.addStyleTag({ content: CSS });
+  if (prelude) await page.addScriptTag({ content: prelude });
   for (const src of SCRIPTS) await page.addScriptTag({ content: src });
   await page.waitForTimeout(400);
   return page;
@@ -348,6 +349,30 @@ async function main() {
       expect('slider minimum is 0.5', slow.min, '0.5');
       expect('slow motion reaches 0.5x', slow.playbackRate, 0.5);
       expect('readout shows 0.5\u00d7', slow.readout, '0.5\u00d7');
+      await page.close();
+    }
+
+    console.log('Default speed from Options:');
+    {
+      // Stands in for chrome.storage.sync holding a speed saved on the Options page.
+      const STORED = `window.chrome = { storage: { sync: { get: async () => ({ defaultSpeed: 1.5 }) } } };`;
+      const page = await open(browser, 'https://www.youtube.com/watch?v=abc123', WATCH_DOM, STORED);
+      const got = await page.evaluate(() => ({
+        playbackRate: document.querySelector('video.html5-main-video').playbackRate,
+        readout: document.querySelector('.youtube-open-short-speed-readout').textContent,
+        unityTicks: document.querySelectorAll('.youtube-open-short-speed-tick--unity').length,
+      }));
+      expect('video starts at the saved default', got.playbackRate, 1.5);
+      expect('readout starts at the saved default', got.readout, '1.5\u00d7');
+      expect('exactly one emphasised 1.0\u00d7 tick', got.unityTicks, 1);
+      await page.close();
+    }
+    {
+      const page = await open(browser, 'https://www.youtube.com/watch?v=abc123', WATCH_DOM);
+      const readout = await page.evaluate(
+        () => document.querySelector('.youtube-open-short-speed-readout').textContent
+      );
+      expect('no storage available falls back to 1\u00d7', readout, '1\u00d7');
       await page.close();
     }
 

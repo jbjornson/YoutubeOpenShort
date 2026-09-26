@@ -1,6 +1,7 @@
 /* Shared floating bar — holds the "Open" button and, where the player has no usable
-   control bar of its own, the speed slider. Pages that show both (Shorts, Reels) get a
-   single panel rather than two overlapping controls.
+   control bar of its own, the mute button, speed slider, and seek controls. Pages that show several
+   (Shorts, Reels) get a single panel rather than overlapping controls; the seek
+   controls wrap onto a second row.
    Offsets come from `position` in sites.config.js via --yos-* custom properties. */
 .youtube-open-short-floating {
   position: fixed;
@@ -10,11 +11,13 @@
   left: var(--yos-left, auto);
   z-index: 2147483000;
   display: flex !important;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: 4px;
-  height: 36px;
+  min-height: 36px;
   margin: 0;
-  padding: 0 6px;
+  padding: 4px 6px;
   box-sizing: border-box;
   border-radius: 18px;
   background: rgba(0, 0, 0, 0.72);
@@ -60,6 +63,123 @@
 #youtube-open-short-button:focus-visible {
   outline: 2px solid #fff;
   outline-offset: 1px;
+}
+
+/* Seek controls take a full row of their own, divided from the row above. Size
+   containment keeps them out of the bar's intrinsic width, so they fill the width the
+   first row sets instead of widening the bar to the sum of both rows. */
+.youtube-open-short-floating > #youtube-open-short-seek {
+  flex: 1 0 100%;
+  contain: inline-size;
+  border-left: none;
+  padding-left: 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.22);
+  padding-top: 4px;
+}
+
+/* Room for the seek row when the first row is narrower (a feed has no Open button);
+   a two-row bar would also look like a blob at full pill radius. */
+.youtube-open-short-floating:has(> #youtube-open-short-seek) {
+  min-width: 252px;
+  border-radius: 14px;
+}
+
+#youtube-open-short-seek {
+  display: flex !important;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  box-sizing: border-box;
+  opacity: 1 !important;
+  visibility: visible !important;
+  pointer-events: auto !important;
+}
+
+.youtube-open-short-seek-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2px;
+}
+
+.youtube-open-short-seek-button,
+#youtube-open-short-mute {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-width: 28px;
+  height: 24px;
+  margin: 0;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  color: #fff;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.youtube-open-short-seek-button svg {
+  display: block;
+  height: 12px;
+  width: auto;
+}
+
+/* Sits in the first row beside the speed slider, so it matches the Open button's height. */
+#youtube-open-short-mute {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 14px;
+  opacity: 1 !important;
+  visibility: visible !important;
+  pointer-events: auto !important;
+}
+
+/* A round icon button can't take the left-border separator; the bar's gap spaces it. */
+.youtube-open-short-floating > #youtube-open-short-mute {
+  border-left: none;
+  padding-left: 0;
+}
+
+#youtube-open-short-mute svg {
+  display: block;
+  width: 18px;
+  height: 18px;
+}
+
+.youtube-open-short-seek-button:hover,
+.youtube-open-short-seek-button:focus-visible,
+#youtube-open-short-mute:hover,
+#youtube-open-short-mute:focus-visible {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.youtube-open-short-seek-button:focus-visible,
+#youtube-open-short-mute:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 1px;
+}
+
+.youtube-open-short-seek-readout {
+  flex: 1 1 auto;
+  font-family: Roboto, Arial, sans-serif;
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  color: #fff;
+  text-align: center;
+  white-space: nowrap;
+  user-select: none;
+}
+
+#youtube-open-short-seek input[type='range']:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 /* Speed slider when it lives in the floating bar rather than a site control bar. */
@@ -164,7 +284,8 @@
   background: #fff;
 }
 
-#youtube-open-short-speed input[type='range'] {
+#youtube-open-short-speed input[type='range'],
+#youtube-open-short-seek input[type='range'] {
   position: relative;
   z-index: 1;
   flex: 1 1 auto;
@@ -180,13 +301,15 @@
   appearance: none;
 }
 
-#youtube-open-short-speed input[type='range']::-webkit-slider-runnable-track {
+#youtube-open-short-speed input[type='range']::-webkit-slider-runnable-track,
+#youtube-open-short-seek input[type='range']::-webkit-slider-runnable-track {
   height: 4px;
   border-radius: 2px;
   background: rgba(255, 255, 255, 0.35);
 }
 
-#youtube-open-short-speed input[type='range']::-webkit-slider-thumb {
+#youtube-open-short-speed input[type='range']::-webkit-slider-thumb,
+#youtube-open-short-seek input[type='range']::-webkit-slider-thumb {
   -webkit-appearance: none;
   width: 12px;
   height: 12px;
@@ -197,13 +320,15 @@
   box-shadow: 0 0 2px rgba(0, 0, 0, 0.45);
 }
 
-#youtube-open-short-speed input[type='range']::-moz-range-track {
+#youtube-open-short-speed input[type='range']::-moz-range-track,
+#youtube-open-short-seek input[type='range']::-moz-range-track {
   height: 4px;
   border-radius: 2px;
   background: rgba(255, 255, 255, 0.35);
 }
 
-#youtube-open-short-speed input[type='range']::-moz-range-thumb {
+#youtube-open-short-speed input[type='range']::-moz-range-thumb,
+#youtube-open-short-seek input[type='range']::-moz-range-thumb {
   width: 12px;
   height: 12px;
   border: none;

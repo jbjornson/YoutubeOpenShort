@@ -29,6 +29,10 @@
  *   insertBeforeSelector  optional; control to insert before (else appended)
  *   videoSelector         the media element to control ('selector' strategy only)
  *   position              floating bar offsets, as in openTargets ('floating' only)
+ *   seek                  optional; also show skip buttons (±1/5/10 s) and a position
+ *                         scrubber in the floating bar ('floating' only)
+ *   mute                  optional; also show a mute/unmute button in the floating bar
+ *                         ('floating' only)
  */
 globalThis.OPEN_SHORT_CONFIG = {
   openTargets: [
@@ -85,6 +89,8 @@ globalThis.OPEN_SHORT_CONFIG = {
       match: '^/shorts/',
       mount: 'floating',
       videoStrategy: 'most-visible',
+      seek: true,
+      mute: true,
       position: { top: '72px', right: '24px' },
     },
     {
@@ -99,6 +105,8 @@ globalThis.OPEN_SHORT_CONFIG = {
       match: '.',
       mount: 'floating',
       videoStrategy: 'most-visible',
+      seek: true,
+      mute: true,
       position: { top: '68px', right: '24px' },
     },
     {
@@ -110,6 +118,8 @@ globalThis.OPEN_SHORT_CONFIG = {
       match: '.',
       mount: 'floating',
       videoStrategy: 'most-visible',
+      seek: true,
+      mute: true,
       position: { top: '76px', right: '24px' },
     },
   ],

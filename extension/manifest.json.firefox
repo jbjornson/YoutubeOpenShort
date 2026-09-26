@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Shorts & Reels as Video",
   "description": "Open YouTube Shorts, Facebook Reels, and Instagram Reels as regular videos in a new tab, and control playback speed on YouTube (Shorts and watch pages), Facebook video, and Instagram video.",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "author": "Ru",
   "icons": {
     "16": "icons/icon16.png",

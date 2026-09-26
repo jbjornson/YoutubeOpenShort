@@ -10,7 +10,7 @@ Adds a floating **Open** button on short-form video pages that opens the current
 
 The button appears in the top-right corner and behaves like a normal link, so middle-click and ⌘/Ctrl-click work too. Where a page has both the button and the speed slider — a Short or a Reel — they share a single floating bar.
 
-Adds a **playback speed slider** from 0.5× to 2.0× in 0.05 steps, with preset ticks at 0.5, 1.0, 1.25, 1.5, 1.75, and 2.0:
+Adds a **playback speed slider** from 0.5× to 2.0× in 0.05 steps, with preset ticks at 0.5, 1.0, 1.25, 1.5, 1.75, and 2.0 (the 1.0× tick is longer and bolder so normal speed is easy to find):
 
 | Page | Slider |
 | --- | --- |
@@ -19,11 +19,11 @@ Adds a **playback speed slider** from 0.5× to 2.0× in 0.05 steps, with preset 
 | Facebook video, Reels, and the feed | in the floating bar |
 | Instagram video, Reels, and the feed | in the floating bar |
 
-Each tab starts at 1.0×; your chosen speed applies to other videos in the same tab only, and carries over as you scroll from one Short, Reel, or feed video to the next. Where a page has several videos at once, the slider drives whichever one covers the most of the screen.
+Each tab starts at your **default speed** — 1.0× unless you change it on the extension's Options page (right-click the toolbar icon → Options, or Details → Extension options in `chrome://extensions`; in Firefox, `about:addons` → Preferences). Your chosen speed applies to other videos in the same tab only, and carries over as you scroll from one Short, Reel, or feed video to the next. Where a page has several videos at once, the slider drives whichever one covers the most of the screen.
 
 Works in **Google Chrome**, **Dia**, and other Chromium-based browsers that support Manifest V3 extensions.
 
-**Current version:** 0.8.1
+**Current version:** 0.9.0
 
 ## Installation
 
@@ -53,6 +53,7 @@ YoutubeOpenShort/
     sites.config.js   ← which URLs map to which watch URL (edit this to add a site)
     site-matcher.js   ← pure URL matching for those patterns
     content.js        ← button + speed slider DOM work
+    options.html/.js  ← Options page: default playback speed
     manifest.json     ← load the extension/ folder unpacked
   scripts/            ← dev tests and icon build
   package.json        ← dev dependencies only
@@ -127,6 +128,12 @@ __youtubeOpenShortDumpState()
 Disable verbose logging: `localStorage.setItem('youtube-open-short-debug', '0')`
 
 ## Changelog
+
+### 0.9.0
+
+- Default playback speed: set the speed every tab starts at on the extension's Options page (saved with `storage.sync`, so it follows your browser profile). The in-player slider still changes only the current tab.
+- The 1.0× tick on the speed slider is now longer and thicker than the other ticks.
+- Needs the `storage` permission.
 
 ### 0.8.1
 

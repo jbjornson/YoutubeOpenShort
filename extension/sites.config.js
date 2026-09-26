@@ -122,5 +122,19 @@ globalThis.OPEN_SHORT_CONFIG = {
       mute: true,
       position: { top: '76px', right: '24px' },
     },
+    {
+      // Deliberately broad, like facebook-video: the For You feed, video pages, and
+      // profile grids all play video, and TikTok's classes are generated. A video's
+      // own page is already its "regular" page, so TikTok gets no Open button.
+      id: 'tiktok-video',
+      hosts: ['tiktok.com'],
+      match: '.',
+      mount: 'floating',
+      videoStrategy: 'most-visible',
+      seek: true,
+      mute: true,
+      // Below the top-right Upload / Log in buttons.
+      position: { top: '72px', right: '24px' },
+    },
   ],
 };

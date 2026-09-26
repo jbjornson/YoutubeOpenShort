@@ -18,10 +18,11 @@ Adds a **playback speed slider** from 0.5× to 2.0× in 0.05 steps, with preset 
 | YouTube Shorts | in the floating bar (the Shorts player has no control bar) |
 | Facebook video, Reels, and the feed | in the floating bar |
 | Instagram video, Reels, and the feed | in the floating bar |
+| TikTok feed and video pages | in the floating bar |
 
 Each tab starts at your **default speed** — 1.0× unless you change it on the extension's Options page (right-click the toolbar icon → Options, or Details → Extension options in `chrome://extensions`; in Firefox, `about:addons` → Preferences). Your chosen speed applies to other videos in the same tab only, and carries over as you scroll from one Short, Reel, or feed video to the next. Where a page has several videos at once, the slider drives whichever one covers the most of the screen.
 
-Adds **seek controls** on YouTube Shorts, Facebook, and Instagram, whose players don't all let you scrub or skip: buttons to jump back or forward 1, 5, or 10 seconds (one, two, or three chevrons; hover for the amount), a time readout, and a position scrubber. They sit on a second row of the floating bar and, like the speed slider, act on whichever video covers the most of the screen. Regular YouTube watch pages keep their native controls.
+Adds **seek controls** on YouTube Shorts, Facebook, Instagram, and TikTok, whose players don't all let you scrub or skip: buttons to jump back or forward 1, 5, or 10 seconds (one, two, or three chevrons; hover for the amount), a time readout, and a position scrubber. They sit on a second row of the floating bar and, like the speed slider, act on whichever video covers the most of the screen. Regular YouTube watch pages keep their native controls.
 
 On the same sites, a **mute/unmute button** sits beside the speed slider, so you don't have to hunt for the player's own small overlay icon. Once you use it, your choice follows you to the next Short, Reel, or feed video; muting with the site's own control (or tapping an Instagram reel) still works and becomes the new choice.
 
@@ -138,7 +139,8 @@ Disable verbose logging: `localStorage.setItem('youtube-open-short-debug', '0')`
 ### 0.10.0
 
 - Seek controls on YouTube Shorts, Facebook, and Instagram: −10 / −5 / −1 and +1 / +5 / +10 second buttons, a `current / duration` readout, and a position scrubber, on a second row of the floating bar. Instagram's player has no way to scrub at all; this fills the gap. Enabled per site with the new `seek` field on `speedTargets`.
-- Mute/unmute button in the floating bar on the same sites, beside the speed slider. The choice carries to the next video; a site re-muting a freshly-active video is undone, while muting with the site's own control is respected. Enabled per site with the new `mute` field.
+- TikTok support: the mute button, speed slider, and seek controls work on the For You feed, video pages, and anywhere else a TikTok video plays. No Open button, since a TikTok video's own page is already its regular page.
+- Mute/unmute button in the floating bar on the same sites, beside the speed slider. The choice carries to the next video; a site re-muting a freshly-active video, or a reel as it loops, is undone, while muting with the site's own control is respected. Enabled per site with the new `mute` field.
 
 ### 0.9.0
 

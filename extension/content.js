@@ -355,6 +355,7 @@
       syncVideo.removeEventListener('loadedmetadata', onVideoReady);
       syncVideo.removeEventListener('canplay', onVideoReady);
       syncVideo.removeEventListener('volumechange', onVideoVolumeChange);
+      for (const type of RESTART_EVENTS) syncVideo.removeEventListener(type, onVideoRestart);
       for (const type of TIME_EVENTS) syncVideo.removeEventListener(type, onVideoTime);
     }
     syncVideo = null;
@@ -373,11 +374,10 @@
       syncVideo.addEventListener('loadedmetadata', onVideoReady);
       syncVideo.addEventListener('canplay', onVideoReady);
       syncVideo.addEventListener('volumechange', onVideoVolumeChange);
+      for (const type of RESTART_EVENTS) syncVideo.addEventListener(type, onVideoRestart);
+      lastPlayhead = syncVideo.currentTime;
       for (const type of TIME_EVENTS) syncVideo.addEventListener(type, onVideoTime);
-      if (preferredMuted !== null) {
-        applyMuted(syncVideo, preferredMuted);
-        muteGraceUntil = Date.now() + MUTE_GRACE_MS;
-      }
+      holdMuteChoice();
       onVideoReady();
       onVideoTime();
       updateMuteButtonUI(document.getElementById(MUTE_BUTTON_ID), syncVideo);
@@ -595,6 +595,33 @@
   // null until the user presses our button; until then sound is left to the site.
   let preferredMuted = null;
   let muteGraceUntil = 0;
+  let lastPlayhead = 0;
+
+  const RESTART_EVENTS = ['seeking', 'play', 'timeupdate'];
+
+  /** Re-assert the user's choice and give the site's reset the same grace as a new video. */
+  function holdMuteChoice() {
+    if (preferredMuted === null || !(syncVideo instanceof HTMLVideoElement)) return;
+    muteGraceUntil = Date.now() + MUTE_GRACE_MS;
+    applyMuted(syncVideo, preferredMuted);
+  }
+
+  /**
+   * A looping reel starts over, and the sites re-apply their own sound setting as it
+   * does (seen on Instagram), long after the new-video grace has run out. Treat a
+   * restart like a new video. Loops show up as `seeking` back to the start (the `loop`
+   * attribute, or a site rewinding by hand), `play` after a site-driven replay, or just
+   * the playhead wrapping round between two timeupdates.
+   */
+  function onVideoRestart(event) {
+    if (!(syncVideo instanceof HTMLVideoElement)) return;
+    const t = syncVideo.currentTime;
+    const wrapped = event.type === 'timeupdate' && t + 1 < lastPlayhead && t < 1;
+    lastPlayhead = t;
+    if (event.type === 'timeupdate' && !wrapped) return;
+    if (event.type === 'seeking' && t >= 1) return;
+    holdMuteChoice();
+  }
 
   const SPEAKER_PATH =
     'M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 7.97v8.05A4.5 4.5 0 0 0 16.5 12zM14 3.23v2.06a7 7 0 0 1 0 13.42v2.06a9 9 0 0 0 0-17.54z';

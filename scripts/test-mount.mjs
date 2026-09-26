@@ -136,6 +136,7 @@ async function main() {
       ['https://www.instagram.com/', PLAIN, null, false, null],
       ['https://www.youtube.com/watch?v=abc123', WATCH_DOM, null, true, null],
       ['https://www.youtube.com/feed/subscriptions', PLAIN, null, false, null],
+      ['https://www.tiktok.com/@someone/video/7123456789', PLAIN, null, false, null],
     ]) {
       const page = await open(browser, url, body);
       const s = await state(page);
@@ -248,6 +249,19 @@ async function main() {
       const st = await state(page);
       expect('instagram feed: mute + slider + seek only', st.barContents, ['youtube-open-short-mute', 'youtube-open-short-speed', 'youtube-open-short-seek']);
       expect('instagram feed: no Open button', st.href, null);
+      await page.close();
+    }
+    {
+      // TikTok gets the controls but no Open button, at its own offset. The feed keeps
+      // a small muted preview <video> beside the real one, like Shorts' decoy.
+      const page = await open(browser, 'https://www.tiktok.com/foryou', `<body style="background:#111;margin:0">
+        <video id="main" style="width:414px;height:736px;display:block" muted></video>
+        <video id="thumb" style="width:50px;height:50px;position:fixed;top:0;left:0" muted></video>
+      </body>`);
+      const st = await state(page);
+      expect('tiktok: mute + slider + seek, no Open', st.barContents, ['youtube-open-short-mute', 'youtube-open-short-speed', 'youtube-open-short-seek']);
+      expect('tiktok: bar clears the top-right buttons', st.offset, { top: 72, right: 24 });
+      expect('tiktok: drives the feed video, not the preview', await drivenVideoId(page), 'main');
       await page.close();
     }
     {
@@ -544,6 +558,31 @@ async function main() {
       expect('native mute is adopted, not fought', { v2: adopted.v2, pressed: adopted.pressed }, { v2: true, pressed: 'true' });
       await scrollTo(2360);
       expect('the adopted choice carries on', (await mute()).v3, true);
+
+      // Long after v3 became active, a loop restarts it and the site re-applies its own
+      // sound setting; the user's choice must survive every way a loop can show up.
+      await page.evaluate(() => document.getElementById('youtube-open-short-mute').click());
+      for (const how of ['seeking', 'play', 'wrap']) {
+        // Outlast the previous grace window, so each kind of loop has to be detected itself.
+        await page.waitForTimeout(1600);
+        await page.evaluate((kind) => {
+          const v = document.getElementById('v3');
+          if (kind === 'wrap') {
+            // Playhead jumps from near the end back to the start between timeupdates.
+            let t = 12;
+            Object.defineProperty(v, 'currentTime', { configurable: true, get: () => t, set: (x) => { t = x; } });
+            v.dispatchEvent(new Event('timeupdate'));
+            t = 0.1;
+            v.dispatchEvent(new Event('timeupdate'));
+          } else {
+            v.dispatchEvent(new Event(kind));
+          }
+          v.muted = true; // the site's reset as the loop starts
+        }, how);
+        await page.waitForTimeout(100);
+        const st = await mute();
+        expect(`loop via ${how} keeps the chosen unmute`, { v3: st.v3, pressed: st.pressed }, { v3: false, pressed: 'false' });
+      }
 
       const leaked = await page.evaluate(() => {
         let hits = 0;

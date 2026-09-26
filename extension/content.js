@@ -4,15 +4,30 @@
   if (window.__youtubeOpenShortLoaded) return;
   window.__youtubeOpenShortLoaded = true;
 
-  const VERSION = '0.5.0';
+  const VERSION = '0.8.1';
   const LOG_PREFIX = '[YoutubeOpenShort]';
   const BUTTON_ID = 'youtube-open-short-button';
+  const FLOATING_CLASS = 'youtube-open-short-floating';
   const SPEED_CONTROL_ID = 'youtube-open-short-speed';
-  const SPEED_MIN = 1.0;
+  const SPEED_MIN = 0.5;
   const SPEED_MAX = 2.0;
   const SPEED_STEP = 0.05;
   const SPEED_TICK = 0.25;
-  const SPEED_PRESETS = [1.0, 1.25, 1.5, 1.75, 2.0];
+  const SPEED_PRESETS = [0.5, 1.0, 1.25, 1.5, 1.75, 2.0];
+
+  // Widget order inside the shared floating bar.
+  const ORDER_OPEN = 1;
+  const ORDER_SPEED = 2;
+
+  // A video smaller than this is chrome or a hidden decoy, not the one being watched.
+  // Shorts pages keep a 0x0 <video> alongside the real one.
+  const MIN_VIDEO_WIDTH = 80;
+  const MIN_VIDEO_HEIGHT = 60;
+  // Weight given to a video that is actually playing, when several are on screen.
+  const PLAYING_WEIGHT = 1.5;
+
+  const config = globalThis.OPEN_SHORT_CONFIG || { openTargets: [], speedTargets: [] };
+  const matcher = globalThis.OpenShortMatcher;
 
   function isDebugEnabled() {
     try {
@@ -40,64 +55,6 @@
     };
   }
 
-  function collectDomSnapshot() {
-    const buttons = document.querySelector('#buttons');
-    const actions = document.querySelector('#actions');
-    const btn = document.getElementById(BUTTON_ID);
-    return {
-      version: VERSION,
-      url: location.href,
-      pathname: location.pathname,
-      isShortsPage: isShortsPage(),
-      videoId: getVideoId(),
-      watchUrl: getWatchUrl(),
-      legacyButtons: describeEl(buttons),
-      legacyActions: describeEl(actions),
-      likeButtonViewModel: Boolean(querySelectorDeep('like-button-view-model')),
-      reelActionBarItems: querySelectorAllDeep(
-        'reel-action-bar-item-view-model, reel-action-bar-item-renderer'
-      ).length,
-      shortsPlayer: Boolean(
-        document.querySelector('#shorts-player') || querySelectorDeep('#shorts-player')
-      ),
-      reelOverlay: Boolean(
-        document.querySelector('ytd-reel-player-overlay-renderer') ||
-          querySelectorDeep('ytd-reel-player-overlay-renderer')
-      ),
-      activeRenderer: Boolean(getActiveRenderer()),
-      ourButton: describeEl(btn),
-      ourButtonParent: describeEl(btn?.parentElement),
-      isWatchPage: isWatchPage(),
-      speedControl: describeEl(document.getElementById(SPEED_CONTROL_ID)),
-      playbackRate: getActiveVideo()?.playbackRate ?? null,
-    };
-  }
-
-  let lastMountLogKey = '';
-  function logMountResult(phase, detail) {
-    const key = JSON.stringify({ phase, ...detail });
-    if (key === lastMountLogKey) return;
-    lastMountLogKey = key;
-    log('log', `${phase}`, { ...detail, snapshot: collectDomSnapshot() });
-  }
-  const ACTION_ROW_SEL =
-    'reel-action-bar-item-view-model, reel-action-bar-item-renderer, ytd-reel-player-overlay-reel-item-renderer';
-
-  function appendIcon(target) {
-    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('height', '1em');
-    svg.setAttribute('viewBox', '0 0 512 512');
-    svg.setAttribute('aria-hidden', 'true');
-    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    path.setAttribute('fill', 'currentColor');
-    path.setAttribute(
-      'd',
-      'M320 0c-17.7 0-32 14.3-32 32s14.3 32 32 32h82.7L201.4 265.4c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0L448 109.3V192c0 17.7 14.3 32 32 32s32-14.3 32-32V32c0-17.7-14.3-32-32-32H320zM80 32C35.8 32 0 67.8 0 112V432c0 44.2 35.8 80 80 80H400c44.2 0 80-35.8 80-80V320c0-17.7-14.3-32-32-32s-32 14.3-32 32V432c0 8.8-7.2 16-16 16H80c-8.8 0-16-7.2-16-16V112c0-8.8 7.2-16 16-16H192c17.7 0 32-14.3 32-32s-14.3-32-32-32H80z'
-    );
-    svg.appendChild(path);
-    target.appendChild(svg);
-  }
-
   function querySelectorDeep(selector, base = document.documentElement) {
     if (!base) return null;
     const stack = [base];
@@ -123,101 +80,185 @@
     return null;
   }
 
-  function querySelectorAllDeep(selector, base = document.documentElement) {
-    if (!base) return [];
-    const out = [];
-    const seen = new Set();
-    const stack = [base];
-    while (stack.length) {
-      const node = stack.pop();
-      if (!node) continue;
-      if (node instanceof Element || node instanceof ShadowRoot) {
-        try {
-          node.querySelectorAll(selector).forEach((el) => {
-            if (!seen.has(el)) {
-              seen.add(el);
-              out.push(el);
-            }
-          });
-        } catch (_) {}
-      }
-      if (node instanceof Element) {
-        if (node.shadowRoot) stack.push(node.shadowRoot);
-        for (let i = node.children.length - 1; i >= 0; i--) stack.push(node.children[i]);
-      } else if (node instanceof ShadowRoot) {
-        for (let i = node.children.length - 1; i >= 0; i--) stack.push(node.children[i]);
-      }
-    }
-    return out;
+  function isVisible(el) {
+    if (!(el instanceof Element)) return false;
+    const rect = el.getBoundingClientRect();
+    return rect.width > 8 && rect.height > 8;
   }
 
-  function isShortsPage() {
-    if (/\/shorts(\/|$)/.test(window.location.pathname)) return true;
-    return Boolean(
-      document.querySelector('#shorts-player') ||
-        querySelectorDeep('#shorts-player') ||
-        document.querySelector('ytd-shorts') ||
-        document.querySelector('#shorts-container')
-    );
-  }
-
-  function getActiveRenderer() {
+  function elementIsOnScreen(el) {
+    if (!(el instanceof Element) || !isVisible(el)) return false;
+    const rect = el.getBoundingClientRect();
     return (
-      document.querySelector('ytd-reel-video-renderer[is-active]') ||
-      document.querySelector('ytd-reel-video-renderer[reel-active]') ||
-      document.querySelector("ytd-reel-video-renderer[aria-hidden='false']") ||
-      querySelectorDeep("ytd-reel-video-renderer[is-active]") ||
-      querySelectorDeep("ytd-reel-video-renderer[reel-active]")
+      rect.bottom > 0 &&
+      rect.right > 0 &&
+      rect.top < window.innerHeight &&
+      rect.left < window.innerWidth
     );
   }
 
-  function parseShortsIdFromHref(href) {
-    if (!href) return null;
-    const match = String(href).match(/\/shorts\/([^/?#&]+)/);
-    return match ? match[1] : null;
-  }
+  // --- Config lookups -------------------------------------------------------
 
-  function getVideoId() {
-    const fromUrl = parseShortsIdFromHref(window.location.pathname);
-    if (fromUrl) return fromUrl;
+  function getOpenEntry() {
+    if (!matcher) return null;
 
-    const activeRenderer = getActiveRenderer();
-    if (activeRenderer) {
-      const link = activeRenderer.querySelector('a[href*="/shorts/"]');
-      const fromLink = parseShortsIdFromHref(link?.href || link?.getAttribute('href'));
-      if (fromLink) return fromLink;
+    const byUrl = matcher.findEntry(location.href, config.openTargets);
+    if (byUrl) return byUrl;
+
+    // A configured site can already be showing a short/reel while its SPA URL lags
+    // behind. Light-DOM selectors only — this runs on every mutation tick.
+    for (const entry of config.openTargets || []) {
+      if (!Array.isArray(entry.pageSelectors) || !entry.pageSelectors.length) continue;
+      if (!matcher.hostMatches(location.hostname, entry.hosts)) continue;
+      if (entry.pageSelectors.some((selector) => document.querySelector(selector))) return entry;
     }
 
     return null;
   }
 
-  function getWatchUrl() {
-    const videoId = getVideoId();
-    return videoId ? `https://www.youtube.com/watch?v=${videoId}` : null;
+  function getSpeedEntry() {
+    if (!matcher) return null;
+    return matcher.findEntry(location.href, config.speedTargets);
   }
 
-  function isWatchPage() {
-    return (
-      /^\/watch(\/|$)/.test(location.pathname) &&
-      new URLSearchParams(location.search).has('v') &&
-      !isShortsPage()
+  /**
+   * Target URL for the current page. Falls back to the active item's link when the
+   * SPA URL lags behind what is on screen (YouTube's Shorts feed does this while
+   * scrolling), driven by the entry's own selectors.
+   */
+  function getTargetUrl(entry = getOpenEntry()) {
+    if (!entry || !matcher) return null;
+
+    const fromUrl = matcher.resolveTarget(location.href, entry);
+    if (fromUrl) return fromUrl;
+
+    const fallback = entry.fallback;
+    if (!fallback) return null;
+
+    const activeItem = fallback.activeItemSelector
+      ? document.querySelector(fallback.activeItemSelector) ||
+        querySelectorDeep(fallback.activeItemSelector)
+      : null;
+    if (!activeItem) return null;
+
+    const link = activeItem.querySelector(fallback.linkSelector);
+    const href = link?.href || link?.getAttribute('href');
+    return matcher.resolveFromHref(href, entry, location.href);
+  }
+
+  // --- Debug snapshot -------------------------------------------------------
+
+  function collectDomSnapshot() {
+    const entry = getOpenEntry();
+    const speedEntry = getSpeedEntry();
+    const activeVideo = getActiveVideo();
+    const btn = document.getElementById(BUTTON_ID);
+    return {
+      version: VERSION,
+      url: location.href,
+      pathname: location.pathname,
+      entryId: entry?.id || null,
+      targetUrl: getTargetUrl(entry),
+      speedEntryId: speedEntry?.id || null,
+      ourButton: describeEl(btn),
+      buttonHref: btn instanceof HTMLAnchorElement ? btn.href : null,
+      speedMount: speedEntry?.mount || null,
+      speedControl: describeEl(document.getElementById(SPEED_CONTROL_ID)),
+      activeVideo: describeEl(activeVideo),
+      videoPickScore: speedEntry?.videoStrategy === 'most-visible' ? lastPickScore : null,
+      playbackRate: activeVideo?.playbackRate ?? null,
+    };
+  }
+
+  let lastMountLogKey = '';
+  function logMountResult(phase, detail) {
+    const key = JSON.stringify({ phase, ...detail });
+    if (key === lastMountLogKey) return;
+    lastMountLogKey = key;
+    log('log', `${phase}`, { ...detail, snapshot: collectDomSnapshot() });
+  }
+
+  function appendIcon(target) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('height', '1em');
+    svg.setAttribute('viewBox', '0 0 512 512');
+    svg.setAttribute('aria-hidden', 'true');
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('fill', 'currentColor');
+    path.setAttribute(
+      'd',
+      'M320 0c-17.7 0-32 14.3-32 32s14.3 32 32 32h82.7L201.4 265.4c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0L448 109.3V192c0 17.7 14.3 32 32 32s32-14.3 32-32V32c0-17.7-14.3-32-32-32H320zM80 32C35.8 32 0 67.8 0 112V432c0 44.2 35.8 80 80 80H400c44.2 0 80-35.8 80-80V320c0-17.7-14.3-32-32-32s-32 14.3-32 32V432c0 8.8-7.2 16-16 16H80c-8.8 0-16-7.2-16-16V112c0-8.8 7.2-16 16-16H192c17.7 0 32-14.3 32-32s-14.3-32-32-32H80z'
     );
+    svg.appendChild(path);
+    target.appendChild(svg);
+  }
+
+  // --- Speed slider ---------------------------------------------------------
+
+  let lastPickScore = 0;
+
+  /**
+   * The video covering the most of the viewport, preferring one that is playing.
+   * Needed where a selector cannot identify the right video: a Shorts page keeps a
+   * hidden 0x0 <video> beside the real one and does not reliably mark the active
+   * renderer, and a Facebook feed holds many videos at once.
+   */
+  function pickMostVisibleVideo() {
+    const viewportWidth = window.innerWidth || 0;
+    const viewportHeight = window.innerHeight || 0;
+    let best = null;
+    let bestScore = 0;
+
+    for (const video of document.querySelectorAll('video')) {
+      const rect = video.getBoundingClientRect();
+      if (rect.width < MIN_VIDEO_WIDTH || rect.height < MIN_VIDEO_HEIGHT) continue;
+
+      const visibleWidth = Math.max(0, Math.min(rect.right, viewportWidth) - Math.max(rect.left, 0));
+      const visibleHeight = Math.max(0, Math.min(rect.bottom, viewportHeight) - Math.max(rect.top, 0));
+      let score = visibleWidth * visibleHeight;
+      if (score <= 0) continue;
+      if (!video.paused) score *= PLAYING_WEIGHT;
+
+      if (score > bestScore) {
+        bestScore = score;
+        best = video;
+      }
+    }
+
+    lastPickScore = Math.round(bestScore);
+    return best;
   }
 
   function getActiveVideo() {
-    return (
-      document.querySelector('#movie_player video.html5-main-video') ||
-      document.querySelector('video.html5-main-video') ||
-      querySelectorDeep('video')
-    );
+    // Only meaningful on a speed-slider page; skipping the lookup elsewhere keeps
+    // this cheap on sites that only use the Open button.
+    const entry = getSpeedEntry();
+    if (!entry) return null;
+
+    if (entry.videoStrategy === 'most-visible') return pickMostVisibleVideo();
+
+    if (entry.videoSelector) {
+      const el = document.querySelector(entry.videoSelector) || querySelectorDeep(entry.videoSelector);
+      if (el) return el;
+    }
+    return querySelectorDeep('video');
   }
 
-  function findSpeedMount() {
-    const right =
-      document.querySelector('#movie_player .ytp-right-controls') ||
-      querySelectorDeep('.ytp-right-controls');
-    if (!right) return null;
-    return { parent: right, before: right.querySelector('.ytp-settings-button') };
+  function findSpeedMount(entry = getSpeedEntry()) {
+    if (!entry?.controlsSelector) return null;
+    const bar =
+      document.querySelector(entry.controlsSelector) || querySelectorDeep(entry.controlsSelector);
+    if (!bar) return null;
+
+    // Mount into whatever container actually holds the reference control, so we land
+    // directly beside it even when the site nests its controls in wrapper divs
+    // (YouTube groups them under .ytp-right-controls-left / -right).
+    const reference = entry.insertBeforeSelector
+      ? bar.querySelector(entry.insertBeforeSelector)
+      : null;
+    if (reference?.parentElement) return { parent: reference.parentElement, before: reference };
+
+    return { parent: bar, before: null };
   }
 
   function clampSpeed(rate) {
@@ -253,8 +294,26 @@
   let rateSyncVideo = null;
   let preferredSpeed = 1;
 
+  /**
+   * A 'floating' mount (Shorts, Facebook, Instagram) has no native speed control of
+   * its own to mirror — our slider is the only one, so it is authoritative. Some of
+   * these sites' own players reset a video's playbackRate on their own (observed on
+   * Instagram: a freshly-active video's rate gets reset to 0.5x moments after we set
+   * it), which would otherwise get adopted here as if the user had chosen it, and
+   * then get carried into every video after it. For 'player-bar' mounts (YouTube
+   * watch, which has its own visible speed control next to the settings cog) a rate
+   * change really can be the user reaching for that native control, so it is still
+   * adopted as the new preference there.
+   */
   function onVideoRateChange() {
     if (!(rateSyncVideo instanceof HTMLVideoElement)) return;
+    const entry = getSpeedEntry();
+    if (entry?.mount === 'floating') {
+      if (Math.abs(rateSyncVideo.playbackRate - preferredSpeed) > 0.001) {
+        rateSyncVideo.playbackRate = preferredSpeed;
+      }
+      return;
+    }
     preferredSpeed = clampSpeed(rateSyncVideo.playbackRate);
     const control = document.getElementById(SPEED_CONTROL_ID);
     if (control) updateSpeedControlUI(control, rateSyncVideo.playbackRate);
@@ -369,6 +428,7 @@
 
   function removeSpeedControl() {
     document.getElementById(SPEED_CONTROL_ID)?.remove();
+    removeFloatingBarIfEmpty();
     if (rateSyncVideo instanceof HTMLVideoElement) {
       rateSyncVideo.removeEventListener('ratechange', onVideoRateChange);
       rateSyncVideo.removeEventListener('loadedmetadata', onVideoReady);
@@ -377,16 +437,50 @@
     rateSyncVideo = null;
   }
 
-  function mountSpeedControl() {
-    if (!isWatchPage()) {
-      logMountResult('speed:skip:not-watch-page', { pathname: location.pathname });
+  /** Speed control in the shared floating bar, for players with no usable control bar. */
+  function mountFloatingSpeedControl(entry) {
+    // No video on screen means nothing to control — this is what keeps the slider off
+    // the many Facebook pages that the deliberately broad `match` also covers.
+    const video = getActiveVideo();
+    if (!(video instanceof HTMLVideoElement)) {
+      logMountResult('speed:skip:no-video', { entryId: entry.id, pathname: location.pathname });
       removeSpeedControl();
       return;
     }
 
-    const mount = findSpeedMount();
+    let control = document.getElementById(SPEED_CONTROL_ID);
+    const created = !control;
+    if (!control) control = createSpeedControl();
+
+    const moved = mountIntoBar(ensureFloatingBar(), control, ORDER_SPEED);
+    if (created || moved) {
+      logMountResult('speed:mounted:floating', {
+        created,
+        entryId: entry.id,
+        video: describeEl(video),
+        score: lastPickScore,
+      });
+    }
+
+    ensureRateSync();
+  }
+
+  function mountSpeedControl() {
+    const entry = getSpeedEntry();
+    if (!entry) {
+      logMountResult('speed:skip:no-config-match', { pathname: location.pathname });
+      removeSpeedControl();
+      return;
+    }
+
+    if (entry.mount === 'floating') {
+      mountFloatingSpeedControl(entry);
+      return;
+    }
+
+    const mount = findSpeedMount(entry);
     if (!mount) {
-      logMountResult('speed:fail:no-mount-point', {});
+      logMountResult('speed:fail:no-mount-point', { entryId: entry.id });
       return;
     }
 
@@ -408,6 +502,7 @@
         insertMount();
         logMountResult('speed:mounted', {
           created,
+          entryId: entry.id,
           parent: describeEl(parent),
           before: describeEl(before),
         });
@@ -441,519 +536,125 @@
     ensureRateSync();
   }
 
-  function isVisible(el) {
-    if (!(el instanceof Element)) return false;
-    const rect = el.getBoundingClientRect();
-    return rect.width > 8 && rect.height > 8;
+  // --- Shared floating bar --------------------------------------------------
+  // The Open button and the floating speed slider share one container, so pages that
+  // show both (Shorts, Reels) get a single control rather than two overlapping ones.
+
+  /** The Open button's position wins; otherwise a floating speed entry supplies it. */
+  function resolveBarPosition() {
+    const openEntry = getOpenEntry();
+    if (openEntry?.position) return openEntry.position;
+
+    const speedEntry = getSpeedEntry();
+    if (speedEntry?.mount === 'floating' && speedEntry.position) return speedEntry.position;
+
+    return {};
   }
 
-  function isInShortsActionUi(el) {
-    if (!(el instanceof Element)) return false;
-    return Boolean(
-      el.closest('ytd-reel-player-overlay-renderer') ||
-        el.closest('#shorts-player') ||
-        el.closest('reel-action-bar-view-model') ||
-        el.closest('reel-action-bar-item-view-model')
-    );
+  function ensureFloatingBar() {
+    let bar = document.querySelector(`.${FLOATING_CLASS}`);
+    if (!bar) {
+      bar = document.createElement('div');
+      bar.className = FLOATING_CLASS;
+      bar.setAttribute('data-youtube-open-short', '1');
+    }
+    if (bar.parentElement !== document.documentElement) {
+      document.documentElement.appendChild(bar);
+    }
+
+    const position = resolveBarPosition();
+    for (const side of ['top', 'right', 'bottom', 'left']) {
+      if (position[side]) bar.style.setProperty(`--yos-${side}`, String(position[side]));
+      else bar.style.removeProperty(`--yos-${side}`);
+    }
+    return bar;
   }
 
-  function pickButtonsOrActions(root) {
-    if (!root) return null;
-    return (
-      root.querySelector('#buttons') ||
-      root.querySelector('#actions') ||
-      querySelectorDeep('#buttons', root) ||
-      querySelectorDeep('#actions', root)
-    );
+  /** Insert `el` into the bar at its configured slot. Returns true if it moved. */
+  function mountIntoBar(bar, el, order) {
+    el.dataset.yosOrder = String(order);
+    if (el.parentElement === bar) return false;
+
+    const next = [...bar.children].find((child) => Number(child.dataset.yosOrder) > order);
+    if (next) bar.insertBefore(el, next);
+    else bar.appendChild(el);
+    return true;
   }
 
-  function findDirectFlexChild(column, inner) {
-    let node = inner;
-    while (node && node.parentElement && node.parentElement !== column) {
-      node = node.parentElement;
-    }
-    return node;
+  function removeFloatingBarIfEmpty() {
+    const bar = document.querySelector(`.${FLOATING_CLASS}`);
+    if (bar && !bar.children.length) bar.remove();
   }
 
-  function findActionRowElement(inner) {
-    if (!(inner instanceof Element)) return null;
-    const byItem = inner.closest(ACTION_ROW_SEL);
-    if (byItem?.parentElement) return byItem;
+  // --- Floating Open button -------------------------------------------------
 
-    let node = inner;
-    for (let depth = 0; depth < 24 && node; depth++) {
-      const parent = node.parentElement;
-      if (!parent) break;
-      const style = getComputedStyle(parent);
-      if (
-        style.display.includes('flex') &&
-        (style.flexDirection === 'column' || style.flexDirection === 'column-reverse')
-      ) {
-        const direct = findDirectFlexChild(parent, inner);
-        if (direct) return direct;
-      }
-      node = parent;
-    }
-    return null;
-  }
-
-  function findLikeAnchor(scope) {
-    if (!scope) return null;
-    return (
-      (scope instanceof Element && scope.querySelector('#like-button')) ||
-      querySelectorDeep('#like-button', scope) ||
-      querySelectorDeep('like-button-view-model', scope) ||
-      querySelectorDeep('segmented-like-dislike-button-view-model', scope)
-    );
-  }
-
-  function findLikeAnchorByAria(scope) {
-    const actions = pickButtonsOrActions(scope) || querySelectorDeep('#actions', scope);
-    if (!(actions instanceof Element)) return null;
-    const buttons = querySelectorAllDeep('button', actions);
-    for (const btn of buttons) {
-      if (!(btn instanceof HTMLButtonElement) || !isInShortsActionUi(btn)) continue;
-      const label = (
-        btn.getAttribute('aria-label') ||
-        btn.getAttribute('title') ||
-        btn.textContent ||
-        ''
-      ).toLowerCase();
-      if (!/(like|likes)/i.test(label)) continue;
-      return (
-        btn.closest('#like-button') ||
-        btn.closest('like-button-view-model') ||
-        btn.closest('segmented-like-dislike-button-view-model') ||
-        btn
-      );
-    }
-    return null;
-  }
-
-  function findFallbackAnchorRow(scope) {
-    const likeInner =
-      findLikeAnchor(scope) || findLikeAnchorByAria(scope) || findLikeAnchor(document.documentElement);
-    if (likeInner) {
-      const row = findActionRowElement(likeInner);
-      if (row) return row;
-    }
-
-    const actions = pickButtonsOrActions(scope);
-    if (actions instanceof Element) {
-      for (const child of actions.children) {
-        if (!(child instanceof HTMLElement) || !isInShortsActionUi(child)) continue;
-        const btn = child.querySelector('button');
-        if (btn instanceof HTMLButtonElement) {
-          return findActionRowElement(btn) || child;
-        }
-      }
-    }
-
-    const rows = querySelectorAllDeep(ACTION_ROW_SEL, scope || document.documentElement).filter(
-      isInShortsActionUi
-    );
-    return rows[0] || null;
-  }
-
-  function getShortsScope() {
-    const activeRenderer = getActiveRenderer();
-    if (activeRenderer) {
-      const overlay =
-        activeRenderer.querySelector('ytd-reel-player-overlay-renderer') ||
-        querySelectorDeep('ytd-reel-player-overlay-renderer', activeRenderer);
-      if (overlay) return overlay;
-    }
-
-    const visibleOverlays = [...document.querySelectorAll('ytd-reel-player-overlay-renderer')]
-      .filter(isVisible)
-      .sort((a, b) => {
-        const ar = a.getBoundingClientRect();
-        const br = b.getBoundingClientRect();
-        return br.width * br.height - ar.width * ar.height;
-      });
-    if (visibleOverlays[0]) return visibleOverlays[0];
-
-    const deepOverlay = querySelectorDeep('ytd-reel-player-overlay-renderer');
-    if (deepOverlay) return deepOverlay;
-
-    return (
-      document.querySelector('#shorts-player') ||
-      querySelectorDeep('#shorts-player') ||
-      document.documentElement
-    );
-  }
-
-  function elementIsOnScreen(el) {
-    if (!(el instanceof Element) || !isVisible(el)) return false;
-    const rect = el.getBoundingClientRect();
-    return (
-      rect.bottom > 0 &&
-      rect.right > 0 &&
-      rect.top < window.innerHeight &&
-      rect.left < window.innerWidth
-    );
-  }
-
-  function findVisibleLikeAnchor() {
-    const scopes = [getActiveRenderer(), getShortsScope(), document.documentElement].filter(Boolean);
-
-    for (const scope of scopes) {
-      const inner = findLikeAnchor(scope) || findLikeAnchorByAria(scope);
-      if (inner && elementIsOnScreen(inner)) return inner;
-    }
-
-    for (const btn of querySelectorAllDeep('button', getShortsScope())) {
-      if (!(btn instanceof HTMLButtonElement) || !isInShortsActionUi(btn)) continue;
-      const label = (
-        btn.getAttribute('aria-label') ||
-        btn.getAttribute('title') ||
-        btn.textContent ||
-        ''
-      ).toLowerCase();
-      if (!/(like|likes)/i.test(label)) continue;
-      if (!elementIsOnScreen(btn)) continue;
-      return (
-        btn.closest('#like-button') ||
-        btn.closest('like-button-view-model') ||
-        btn.closest('segmented-like-dislike-button-view-model') ||
-        btn
-      );
-    }
-
-    return null;
-  }
-
-  function mountFromVisibleLike(scopeIndex) {
-    const likeInner = findVisibleLikeAnchor();
-    if (!likeInner) return null;
-
-    const anchorRow = findActionRowElement(likeInner);
-    const column = anchorRow?.parentElement;
-    if (!(column instanceof Element)) return null;
-
-    return {
-      parent: column,
-      before: anchorRow,
-      strategy: 'visible-like-column',
-      scopeIndex,
-    };
-  }
-
-  function findMountPoint() {
-    const scopes = [getActiveRenderer(), getShortsScope(), document.documentElement].filter(Boolean);
-
-    for (let i = 0; i < scopes.length; i++) {
-      const fromLike = mountFromVisibleLike(i);
-      if (fromLike) return fromLike;
-    }
-
-    for (let i = 0; i < scopes.length; i++) {
-      const anchorRow = findFallbackAnchorRow(scopes[i]);
-      if (anchorRow && elementIsOnScreen(anchorRow)) {
-        const column = anchorRow.parentElement;
-        if (column instanceof Element) {
-          return {
-            parent: column,
-            before: anchorRow,
-            strategy: 'visible-action-column',
-            scopeIndex: i,
-          };
-        }
-      }
-    }
-
-    for (let i = 0; i < scopes.length; i++) {
-      const legacy = pickButtonsOrActions(scopes[i]);
-      if (legacy instanceof Element && elementIsOnScreen(legacy)) {
-        return {
-          parent: legacy,
-          before: legacy.firstChild,
-          strategy: 'visible-legacy-container',
-          scopeIndex: i,
-        };
-      }
-    }
-
-    for (let i = 0; i < scopes.length; i++) {
-      const legacy = pickButtonsOrActions(scopes[i]);
-      if (legacy instanceof Element) {
-        return {
-          parent: legacy,
-          before: legacy.firstChild,
-          strategy: 'legacy-container-hidden',
-          scopeIndex: i,
-        };
-      }
-    }
-
-    for (let i = 0; i < scopes.length; i++) {
-      const anchorRow = findFallbackAnchorRow(scopes[i]);
-      const column = anchorRow?.parentElement;
-      if (column instanceof Element) {
-        return {
-          parent: column,
-          before: anchorRow,
-          strategy: 'action-column',
-          scopeIndex: i,
-        };
-      }
-    }
-
-    const legacy =
-      document.querySelector('ytd-reel-player-overlay-renderer #buttons') ||
-      document.querySelector('ytd-reel-player-overlay-renderer #actions') ||
-      querySelectorDeep('ytd-reel-player-overlay-renderer #buttons') ||
-      querySelectorDeep('ytd-reel-player-overlay-renderer #actions');
-    if (legacy instanceof Element) {
-      return {
-        parent: legacy,
-        before: legacy.firstChild,
-        strategy: 'legacy-overlay-fallback',
-        scopeIndex: -1,
-      };
-    }
-
-    return null;
-  }
-
-  function openWatchInNewTab() {
-    const url = getWatchUrl();
-    if (!url) return;
-
+  function createOpenLink(entry) {
     const link = document.createElement('a');
-    link.href = url;
+    link.id = BUTTON_ID;
     link.target = '_blank';
     link.rel = 'noopener noreferrer';
-    link.style.display = 'none';
-    document.documentElement.appendChild(link);
-    link.click();
-    link.remove();
-  }
+    appendIcon(link);
 
-  function createButton() {
-    const button = document.createElement('div');
-    button.id = BUTTON_ID;
-    button.setAttribute('role', 'button');
-    button.tabIndex = 0;
-    button.title = 'Open as regular video in new tab';
-    button.setAttribute('aria-label', 'Open as regular video in new tab');
-    button.className =
-      'yt-spec-button-shape-next yt-spec-button-shape-next--tonal yt-spec-button-shape-next--mono yt-spec-button-shape-next--size-l yt-spec-button-shape-next--icon-button';
-    appendIcon(button);
-    button.addEventListener(
-      'click',
-      (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        openWatchInNewTab();
-      },
-      true
-    );
-    return button;
-  }
-
-  function findNativeActionLabel(scope) {
-    const root = scope instanceof Element ? scope : scope?.parentElement;
-    if (!root) return null;
-
-    const selectors = [
-      'ytd-reel-player-overlay-reel-item-renderer #text',
-      '.yt-spec-button-shape-with-label__label',
-      '.yt-spec-touch-feedback-shape__label',
-      'yt-formatted-string#text',
-      'yt-formatted-string',
-    ];
-
-    for (const sel of selectors) {
-      const nodes = root.parentElement
-        ? root.parentElement.querySelectorAll(sel)
-        : document.querySelectorAll(sel);
-      for (const node of nodes) {
-        if (!(node instanceof HTMLElement)) continue;
-        if (node.closest('[data-youtube-open-short]')) continue;
-        if (!isInShortsActionUi(node)) continue;
-        const text = (node.textContent || '').trim();
-        if (!text || text.length > 24) continue;
-        if (elementIsOnScreen(node) || elementIsOnScreen(node.parentElement)) return node;
-      }
-    }
-
-    return null;
-  }
-
-  function syncLabelStyle(label, wrapper) {
-    if (!(label instanceof HTMLElement)) return;
-
-    const native =
-      findNativeActionLabel(wrapper) ||
-      findNativeActionLabel(wrapper.parentElement) ||
-      findNativeActionLabel(getShortsScope());
-
+    const label = document.createElement('span');
     label.className = 'youtube-open-short-label';
+    link.appendChild(label);
 
-    if (native instanceof HTMLElement) {
-      label.className = `${native.className} youtube-open-short-label`.trim();
-      const nativeStyle = getComputedStyle(native);
-      label.style.fontFamily = nativeStyle.fontFamily;
-      label.style.fontSize = nativeStyle.fontSize;
-      label.style.fontWeight = nativeStyle.fontWeight;
-      label.style.lineHeight = nativeStyle.lineHeight;
-      label.style.letterSpacing = nativeStyle.letterSpacing;
-      label.style.color = nativeStyle.color;
-      label.style.textShadow = nativeStyle.textShadow;
-      label.style.marginTop = nativeStyle.marginTop;
-      label.style.textAlign = nativeStyle.textAlign;
-      return;
-    }
-
-    label.style.removeProperty('font-family');
-    label.style.removeProperty('font-size');
-    label.style.removeProperty('font-weight');
-    label.style.removeProperty('line-height');
-    label.style.removeProperty('letter-spacing');
-    label.style.removeProperty('color');
-    label.style.removeProperty('text-shadow');
-    label.style.removeProperty('margin-top');
-    label.style.removeProperty('text-align');
+    applyButtonConfig(link, entry);
+    return link;
   }
 
-  function ensureButtonWrapper(button) {
-    const row = button.closest(ACTION_ROW_SEL);
-    if (row) return row;
+  function applyButtonConfig(link, entry) {
+    const title = entry.title || 'Open as regular video in new tab';
+    link.title = title;
+    link.setAttribute('aria-label', title);
 
-    let wrapper = button.closest('[data-youtube-open-short]');
-    if (!(wrapper instanceof HTMLElement)) {
-      wrapper = document.createElement('div');
-      wrapper.className = 'youtube-open-short-action-item';
-      wrapper.setAttribute('data-youtube-open-short', '1');
-      wrapper.appendChild(button);
-    }
-
-    let label = wrapper.querySelector('.youtube-open-short-label');
-    if (!(label instanceof HTMLElement)) {
-      label = document.createElement('div');
-      label.className = 'youtube-open-short-label';
-      label.textContent = 'Open';
-      wrapper.appendChild(label);
-    }
-
-    syncLabelStyle(label, wrapper);
-    return wrapper;
-  }
-
-  function logMountOutcome(phase, detail) {
-    const button = document.getElementById(BUTTON_ID);
-    logMountResult(phase, {
-      ...detail,
-      button: describeEl(button),
-      buttonOnScreen: elementIsOnScreen(button),
-    });
+    const label = link.querySelector('.youtube-open-short-label');
+    if (label instanceof HTMLElement) label.textContent = entry.label || 'Open';
   }
 
   function removeButton() {
-    document.getElementById(BUTTON_ID)?.closest('[data-youtube-open-short]')?.remove();
     document.getElementById(BUTTON_ID)?.remove();
+    removeFloatingBarIfEmpty();
   }
 
   function mountButton() {
-    if (!isShortsPage()) {
-      logMountResult('skip:not-shorts-page', { pathname: location.pathname });
+    const entry = getOpenEntry();
+    if (!entry) {
+      logMountResult('skip:no-config-match', { pathname: location.pathname });
       removeButton();
       return;
     }
 
-    const mount = findMountPoint();
-    if (!mount) {
-      logMountResult('fail:no-mount-point', {});
+    const targetUrl = getTargetUrl(entry);
+    if (!targetUrl) {
+      logMountResult('skip:no-target-url', { entryId: entry.id, pathname: location.pathname });
+      removeButton();
       return;
     }
 
-    let button = document.getElementById(BUTTON_ID);
-    const created = !button;
-    if (!button) {
-      button = createButton();
+    let link = document.getElementById(BUTTON_ID);
+    const created = !link;
+
+    if (!link) link = createOpenLink(entry);
+    else applyButtonConfig(link, entry);
+
+    if (link instanceof HTMLAnchorElement && link.getAttribute('href') !== targetUrl) {
+      link.href = targetUrl;
     }
 
-    const mountNode = ensureButtonWrapper(button);
-    const { parent, before, strategy, scopeIndex } = mount;
-
-    const insertMount = () => {
-      if (before) parent.insertBefore(mountNode, before);
-      else parent.prepend(mountNode);
-    };
-
-    if (mountNode.parentElement !== parent) {
-      try {
-        insertMount();
-        logMountOutcome('mounted', {
-          created,
-          strategy,
-          scopeIndex,
-          parent: describeEl(parent),
-          before: describeEl(before),
-          mountNode: describeEl(mountNode),
-        });
-      } catch (err) {
-        try {
-          parent.prepend(mountNode);
-          logMountOutcome('mounted:prepend-fallback', {
-            created,
-            strategy,
-            error: String(err),
-            parent: describeEl(parent),
-          });
-        } catch (err2) {
-          log('error', 'mount failed', {
-            strategy,
-            error: String(err2),
-            parent: describeEl(parent),
-          });
-        }
+    try {
+      const moved = mountIntoBar(ensureFloatingBar(), link, ORDER_OPEN);
+      if (created || moved) {
+        logMountResult('mounted', { created, entryId: entry.id, targetUrl });
+      } else {
+        logMountResult('ok:already-mounted', { entryId: entry.id, targetUrl });
       }
-    } else if (before && mountNode.nextElementSibling !== before) {
-      try {
-        insertMount();
-        logMountOutcome('repositioned', {
-          strategy,
-          parent: describeEl(parent),
-          before: describeEl(before),
-        });
-      } catch (err) {
-        log('warn', 'reposition failed', { error: String(err) });
-      }
-    } else {
-      logMountOutcome('ok:already-mounted', {
-        strategy,
-        parent: describeEl(parent),
-      });
-    }
-
-    const label = button.closest('[data-youtube-open-short]')?.querySelector('.youtube-open-short-label');
-    if (label instanceof HTMLElement) syncLabelStyle(label, mountNode);
-
-    if (!elementIsOnScreen(button) && strategy.includes('legacy')) {
-      log('warn', 'button not on screen after legacy mount; retrying visible-like-column', {
-        strategy,
-      });
-      removeButton();
-      const retry = mountFromVisibleLike(scopeIndex);
-      if (retry) {
-        const retryButton = createButton();
-        const retryNode = ensureButtonWrapper(retryButton);
-        try {
-          if (retry.before) retry.parent.insertBefore(retryNode, retry.before);
-          else retry.parent.prepend(retryNode);
-          logMountOutcome('mounted:visible-like-retry', {
-            strategy: retry.strategy,
-            parent: describeEl(retry.parent),
-            before: describeEl(retry.before),
-          });
-        } catch (err) {
-          log('error', 'visible-like retry failed', { error: String(err) });
-        }
-      }
+    } catch (err) {
+      log('error', 'mount failed', { error: String(err), entryId: entry.id });
     }
   }
+
+  // --- Lifecycle ------------------------------------------------------------
 
   let scheduled = false;
   function scheduleMount() {
@@ -967,18 +668,10 @@
   }
 
   function dumpState() {
-    const mount = findMountPoint();
     const speedMount = findSpeedMount();
     const state = {
       ...collectDomSnapshot(),
-      mountPoint: mount
-        ? {
-            strategy: mount.strategy,
-            scopeIndex: mount.scopeIndex,
-            parent: describeEl(mount.parent),
-            before: describeEl(mount.before),
-          }
-        : null,
+      buttonOnScreen: elementIsOnScreen(document.getElementById(BUTTON_ID)),
       speedMountPoint: speedMount
         ? {
             parent: describeEl(speedMount.parent),
@@ -994,11 +687,29 @@
 
   window.__youtubeOpenShortDumpState = dumpState;
 
+  /** True when this host appears in any config list; keeps observers off unrelated pages. */
+  function hostIsConfigured() {
+    if (!matcher) return false;
+    const entries = [...(config.openTargets || []), ...(config.speedTargets || [])];
+    return entries.some((entry) => matcher.hostMatches(location.hostname, entry.hosts));
+  }
+
   function init() {
     log('log', `content script loaded v${VERSION}`, {
       readyState: document.readyState,
       url: location.href,
     });
+
+    if (!matcher) {
+      log('error', 'site-matcher.js did not load; check manifest content_scripts order');
+      return;
+    }
+
+    if (!hostIsConfigured()) {
+      log('log', 'host not configured; idle', { hostname: location.hostname });
+      return;
+    }
+
     dumpState();
     mountButton();
     mountSpeedControl();
@@ -1026,6 +737,11 @@
 
     window.addEventListener('yt-navigate-finish', scheduleMount);
     window.addEventListener('popstate', scheduleMount);
+
+    // Which video is most visible changes on scroll, which does not always mutate the
+    // DOM. Capture phase so scrolling containers (the Shorts and Facebook feeds) count.
+    window.addEventListener('scroll', scheduleMount, { passive: true, capture: true });
+    window.addEventListener('resize', scheduleMount, { passive: true });
   }
 
   if (document.readyState === 'loading') {

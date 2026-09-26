@@ -1,6 +1,8 @@
 {
   "private": true,
   "scripts": {
+    "test:urls": "node scripts/test-url-config.mjs",
+    "test:mount": "node scripts/test-mount.mjs",
     "test:shorts": "node scripts/test-shorts-mount.mjs",
     "test:watch": "node scripts/test-watch-mount.mjs",
     "build:icons": "node scripts/build-icons.mjs"

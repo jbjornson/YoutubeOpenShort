@@ -1,8 +1,7 @@
 *.zip
 node_modules/
 package-lock.json
-.test-profile/
-.test-profile2/
+.test-profile*/
 
 .DS_Store
 Thumbs.db

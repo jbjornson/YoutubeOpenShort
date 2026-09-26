@@ -1,54 +1,88 @@
-[data-youtube-open-short='1'] {
+/* Shared floating bar — holds the "Open" button and, where the player has no usable
+   control bar of its own, the speed slider. Pages that show both (Shorts, Reels) get a
+   single panel rather than two overlapping controls.
+   Offsets come from `position` in sites.config.js via --yos-* custom properties. */
+.youtube-open-short-floating {
+  position: fixed;
+  top: var(--yos-top, 72px);
+  right: var(--yos-right, 24px);
+  bottom: var(--yos-bottom, auto);
+  left: var(--yos-left, auto);
+  z-index: 2147483000;
   display: flex !important;
-  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  width: 100%;
-  max-width: 64px;
+  gap: 4px;
+  height: 36px;
   margin: 0;
-  padding: 0;
+  padding: 0 6px;
+  box-sizing: border-box;
+  border-radius: 18px;
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.35);
+  color: #fff;
   opacity: 1 !important;
   visibility: visible !important;
   pointer-events: auto !important;
-  position: relative;
-  z-index: 2;
+}
+
+/* Separator between two widgets sharing the bar. */
+.youtube-open-short-floating > * + * {
+  border-left: 1px solid rgba(255, 255, 255, 0.22);
+  padding-left: 8px;
 }
 
 #youtube-open-short-button {
   display: inline-flex !important;
   align-items: center;
-  justify-content: center;
-  width: 48px;
-  height: 48px;
-  min-width: 48px;
-  min-height: 48px;
+  gap: 8px;
+  height: 28px;
   margin: 0;
-  padding: 0;
+  padding: 0 8px;
+  box-sizing: border-box;
+  border-radius: 14px;
+  background: transparent;
+  color: inherit;
   cursor: pointer;
+  text-decoration: none !important;
   opacity: 1 !important;
   visibility: visible !important;
-  color: inherit;
+  transition: background 0.15s ease;
+}
+
+#youtube-open-short-button:hover,
+#youtube-open-short-button:focus-visible {
+  background: rgba(255, 255, 255, 0.16);
+  text-decoration: none !important;
+}
+
+#youtube-open-short-button:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 1px;
+}
+
+/* Speed slider when it lives in the floating bar rather than a site control bar. */
+.youtube-open-short-floating #youtube-open-short-speed {
+  height: 28px;
+  max-width: 128px;
+  margin: 0;
+  padding: 0 2px;
 }
 
 #youtube-open-short-button svg {
-  width: 24px;
-  height: 24px;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
 }
 
-/* Fallback when we cannot read a native sibling label */
 .youtube-open-short-label {
-  display: block;
-  margin-top: 2px;
-  padding: 0;
-  font-family: Roboto, Arial, sans-serif;
-  font-size: 1.4rem;
+  font-family: Roboto, Helvetica, Arial, sans-serif;
+  font-size: 14px;
   font-weight: 500;
-  line-height: 2rem;
-  letter-spacing: 0.011em;
-  text-align: center;
-  color: var(--yt-spec-text-primary, #0f0f0f);
-  text-shadow: none;
-  pointer-events: none;
+  line-height: 1;
+  color: inherit;
+  white-space: nowrap;
   user-select: none;
   -webkit-font-smoothing: antialiased;
 }

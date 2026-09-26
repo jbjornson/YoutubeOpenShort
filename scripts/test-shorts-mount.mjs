@@ -1,5 +1,6 @@
 /**
- * Loads the extension in Chromium, opens a public Shorts URL, and asserts the button mounts visibly.
+ * Loads the extension in Chromium, opens a public Shorts URL, and asserts the floating
+ * Open button mounts visibly and points at the matching watch URL.
  * Run: node scripts/test-shorts-mount.mjs
  */
 import { chromium } from 'playwright';
@@ -37,43 +38,15 @@ async function acceptConsentIfPresent(page) {
   }
 }
 
+function expectedWatchUrl(url) {
+  const match = new URL(url).pathname.match(/^\/shorts\/([^/?#&]+)/);
+  return match ? `https://www.youtube.com/watch?v=${match[1]}` : null;
+}
+
 async function diagnose(page) {
   return page.evaluate(() => {
-    const deep = (selector, base = document.documentElement) => {
-      if (!base) return null;
-      const stack = [base];
-      while (stack.length) {
-        const node = stack.pop();
-        if (!node) continue;
-        if (node instanceof Element) {
-          try {
-            if (node.matches(selector)) return node;
-            const hit = node.querySelector(selector);
-            if (hit) return hit;
-          } catch (_) {}
-          if (node.shadowRoot) stack.push(node.shadowRoot);
-          for (let i = node.children.length - 1; i >= 0; i--) stack.push(node.children[i]);
-        } else if (node instanceof ShadowRoot) {
-          try {
-            const hit = node.querySelector(selector);
-            if (hit) return hit;
-          } catch (_) {}
-          for (let i = node.children.length - 1; i >= 0; i--) stack.push(node.children[i]);
-        }
-      }
-      return null;
-    };
-
     const btn = document.getElementById('youtube-open-short-button');
     const rect = btn?.getBoundingClientRect();
-    const isVisible = (el) => {
-      if (!(el instanceof Element)) return false;
-      const r = el.getBoundingClientRect();
-      return r.width > 8 && r.height > 8;
-    };
-    const buttonsEl = document.querySelector('#buttons');
-    const actionsEl = document.querySelector('#actions');
-
     return {
       pathname: location.pathname,
       buttonExists: Boolean(btn),
@@ -82,17 +55,11 @@ async function diagnose(page) {
       buttonRect: rect
         ? { width: rect.width, height: rect.height, top: rect.top, left: rect.left }
         : null,
-      legacyButtons: Boolean(buttonsEl),
-      legacyActions: Boolean(actionsEl),
-      legacyButtonsVisible: isVisible(buttonsEl),
-      legacyActionsVisible: isVisible(actionsEl),
-      likeButtonViewModel: Boolean(deep('like-button-view-model')),
-      reelActionBarItems: document.querySelectorAll('reel-action-bar-item-view-model').length,
-      shortsPlayer: Boolean(document.querySelector('#shorts-player') || deep('#shorts-player')),
-      reelOverlay: Boolean(
-        document.querySelector('ytd-reel-player-overlay-renderer') ||
-          deep('ytd-reel-player-overlay-renderer')
-      ),
+      buttonHref: btn instanceof HTMLAnchorElement ? btn.href : null,
+      buttonTarget: btn?.getAttribute('target') || null,
+      floatingWrapper: Boolean(document.querySelector('.youtube-open-short-floating')),
+      configLoaded: Boolean(window.OPEN_SHORT_CONFIG),
+      matcherLoaded: Boolean(window.OpenShortMatcher),
       extensionFlag: Boolean(window.__youtubeOpenShortLoaded),
     };
   });
@@ -175,11 +142,11 @@ async function main() {
         }
       }
       if (extensionId) {
-        console.log('Loading content script via chrome-extension://', extensionId);
+        console.log('Loading content scripts via chrome-extension://', extensionId);
         try {
-          await page.addScriptTag({
-            url: `chrome-extension://${extensionId}/content.js`,
-          });
+          for (const file of ['sites.config.js', 'site-matcher.js', 'content.js']) {
+            await page.addScriptTag({ url: `chrome-extension://${extensionId}/${file}` });
+          }
           await page.waitForTimeout(2000);
           last = await diagnose(page);
         } catch (err) {
@@ -195,48 +162,14 @@ async function main() {
       await page.waitForTimeout(1000);
     }
 
-    const probe = await page.evaluate(() => {
-      const parent = document.querySelector('#buttons') || document.querySelector('#actions');
-      if (!parent) return { mounted: false, reason: 'no #buttons or #actions' };
-      const el = document.createElement('div');
-      el.id = 'youtube-open-short-probe';
-      el.style.width = '48px';
-      el.style.height = '48px';
-      el.style.background = 'magenta';
-      parent.insertBefore(el, parent.firstChild);
-      const r = el.getBoundingClientRect();
-      el.remove();
-      return {
-        mounted: r.width > 8 && r.height > 8,
-        parentTag: parent.tagName,
-        parentId: parent.id,
-        rect: { width: r.width, height: r.height },
-      };
-    });
-    console.log('Manual mount probe:', JSON.stringify(probe, null, 2));
-
     console.log('Diagnostics:', JSON.stringify(last, null, 2));
-
-    if (!last.likeButtonViewModel && !last.legacyButtons && !last.reelActionBarItems) {
-      throw new Error('Shorts action bar never appeared in the DOM (YouTube UI not ready?)');
-    }
-    if (!probe.mounted) {
-      throw new Error(`Cannot mount into action bar: ${probe.reason || 'unknown'}`);
-    }
-
-    if (last.extensionFlag && last.buttonExists && last.buttonVisible) {
-      console.log('PASS: extension content script mounted a visible button');
-      return;
-    }
 
     if (!last.extensionFlag) {
       console.log(
         'WARN: extension content script did not run in this automated browser (Playwright limitation).'
       );
-      console.log(
-        'PASS (partial): live Shorts DOM has a mount target and a probe element was visible in #buttons.'
-      );
       console.log('Verify manually: reload extension in Chrome/Dia, open the same Shorts URL.');
+      console.log('PASS (partial): reached a live Shorts page; run npm run test:urls for URL coverage.');
       return;
     }
 
@@ -246,8 +179,19 @@ async function main() {
     if (!last.buttonVisible) {
       throw new Error('Extension ran but button is not visible (zero size or off-screen)');
     }
+    if (!last.floatingWrapper) {
+      throw new Error('Button is not inside a .youtube-open-short-floating wrapper');
+    }
+    if (last.buttonTarget !== '_blank') {
+      throw new Error(`Button should open in a new tab, target="${last.buttonTarget}"`);
+    }
 
-    console.log('PASS: extension button is mounted and visible');
+    const expected = expectedWatchUrl(page.url());
+    if (expected && last.buttonHref !== expected) {
+      throw new Error(`Button href is ${last.buttonHref}, expected ${expected}`);
+    }
+
+    console.log('PASS: floating Open button is mounted, visible, and points at', last.buttonHref);
     process.exitCode = 0;
   } catch (err) {
     console.error('FAIL:', err.message || err);

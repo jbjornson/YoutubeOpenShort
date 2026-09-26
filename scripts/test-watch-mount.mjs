@@ -160,11 +160,11 @@ async function main() {
         }
       }
       if (extensionId) {
-        console.log('Loading content script via chrome-extension://', extensionId);
+        console.log('Loading content scripts via chrome-extension://', extensionId);
         try {
-          await page.addScriptTag({
-            url: `chrome-extension://${extensionId}/content.js`,
-          });
+          for (const file of ['sites.config.js', 'site-matcher.js', 'content.js']) {
+            await page.addScriptTag({ url: `chrome-extension://${extensionId}/${file}` });
+          }
           await page.waitForTimeout(2000);
           last = await diagnose(page);
         } catch (err) {
@@ -190,15 +190,18 @@ async function main() {
       el.style.width = '80px';
       el.style.height = '24px';
       el.style.background = 'magenta';
+      // Mount beside the cog in whatever container holds it — YouTube nests the
+      // controls under .ytp-right-controls-left / -right, so it is not a direct child.
       const settings = right.querySelector('.ytp-settings-button');
-      if (settings) right.insertBefore(el, settings);
-      else right.appendChild(el);
+      const parent = settings?.parentElement || right;
+      if (settings) parent.insertBefore(el, settings);
+      else parent.appendChild(el);
       const r = el.getBoundingClientRect();
       el.remove();
       return {
         mounted: r.width > 8 && r.height > 8,
-        parentTag: right.tagName,
-        parentClass: right.className,
+        parentTag: parent.tagName,
+        parentClass: parent.className,
         rect: { width: r.width, height: r.height },
       };
     });

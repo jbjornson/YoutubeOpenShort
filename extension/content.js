@@ -4,7 +4,7 @@
   if (window.__youtubeOpenShortLoaded) return;
   window.__youtubeOpenShortLoaded = true;
 
-  const VERSION = '0.10.0';
+  const VERSION = '1.0.0';
   const LOG_PREFIX = '[YoutubeOpenShort]';
   const BUTTON_ID = 'youtube-open-short-button';
   const FLOATING_CLASS = 'youtube-open-short-floating';

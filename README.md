@@ -28,7 +28,7 @@ On the same sites, a **mute/unmute button** sits beside the speed slider, so you
 
 Works in **Google Chrome**, **Dia**, and other Chromium-based browsers that support Manifest V3 extensions.
 
-**Current version:** 0.10.0
+**Current version:** 1.0.0
 
 ## Installation
 
@@ -137,7 +137,7 @@ Disable verbose logging: `localStorage.setItem('youtube-open-short-debug', '0')`
 
 ## Changelog
 
-### 0.10.0
+### 1.0.0
 
 - Seek controls on YouTube Shorts, Facebook, and Instagram: −10 / −5 / −1 and +1 / +5 / +10 second buttons, a `current / duration` readout, and a position scrubber, on a second row of the floating bar. Instagram's player has no way to scrub at all; this fills the gap. Enabled per site with the new `seek` field on `speedTargets`.
 - TikTok support: the mute button, speed slider, and seek controls work on the For You feed, video pages, and anywhere else a TikTok video plays. No Open button, since a TikTok video's own page is already its regular page.

@@ -24,7 +24,7 @@ Each tab starts at your **default speed** — 1.0× unless you change it on the 
 
 Adds **seek controls** on YouTube Shorts, Facebook, Instagram, and TikTok, whose players don't all let you scrub or skip: buttons to jump back or forward 1, 5, or 10 seconds (one, two, or three chevrons; hover for the amount), a time readout, and a position scrubber. They sit on a second row of the floating bar and, like the speed slider, act on whichever video covers the most of the screen. Regular YouTube watch pages keep their native controls.
 
-On the same sites, a **mute/unmute button** sits beside the speed slider, so you don't have to hunt for the player's own small overlay icon. Once you use it, your choice follows you to the next Short, Reel, or feed video; muting with the site's own control (or tapping an Instagram reel) still works and becomes the new choice.
+On the same sites, a **mute/unmute button** sits beside the speed slider, so you don't have to hunt for the player's own small overlay icon. Once you use it, your choice follows you to the next Short, Reel, or feed video; muting with the site's own control (or tapping an Instagram reel) still works and becomes the new choice. The button presses the site's own mute control for you where it can find it, so the site agrees about the sound and doesn't re-mute a video when it loops or when the next one starts. On Facebook that currently needs the site in English; in other languages the button still mutes and unmutes, but the site may re-apply its own setting.
 
 Works in **Google Chrome**, **Dia**, and other Chromium-based browsers that support Manifest V3 extensions.
 
@@ -106,6 +106,7 @@ The `speedTargets` list works the same way for the playback-speed slider:
   decoy video (Shorts) need.
 - `seek`: `true` also shows the skip buttons and position scrubber (`'floating'` mounts only).
 - `mute`: `true` also shows a mute/unmute button (`'floating'` mounts only).
+- `muteSelector`: the site's own mute toggle; the button presses the match nearest the active video so the site's mute state stays in step. Prefer language-independent hooks over aria-labels.
 
 ## Development
 
@@ -140,7 +141,7 @@ Disable verbose logging: `localStorage.setItem('youtube-open-short-debug', '0')`
 
 - Seek controls on YouTube Shorts, Facebook, and Instagram: −10 / −5 / −1 and +1 / +5 / +10 second buttons, a `current / duration` readout, and a position scrubber, on a second row of the floating bar. Instagram's player has no way to scrub at all; this fills the gap. Enabled per site with the new `seek` field on `speedTargets`.
 - TikTok support: the mute button, speed slider, and seek controls work on the For You feed, video pages, and anywhere else a TikTok video plays. No Open button, since a TikTok video's own page is already its regular page.
-- Mute/unmute button in the floating bar on the same sites, beside the speed slider. The choice carries to the next video; a site re-muting a freshly-active video, or a reel as it loops, is undone, while muting with the site's own control is respected. Enabled per site with the new `mute` field.
+- Mute/unmute button in the floating bar on the same sites, beside the speed slider. The choice carries to the next video; the button works through the site's own mute control (new `muteSelector` field) so the site doesn't re-mute a reel when it loops, with a direct fallback where it can't; a site re-muting a freshly-active video is undone, while muting with the site's own control is respected. Enabled per site with the new `mute` field.
 
 ### 0.9.0
 

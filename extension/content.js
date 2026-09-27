@@ -22,6 +22,11 @@
   // How long after a video becomes active a mute change is taken as the site resetting
   // it rather than the user choosing.
   const MUTE_GRACE_MS = 1500;
+  // A site's own mute control this many levels up from the active video still belongs
+  // to it; further out it belongs to a neighbouring reel (Instagram: 8 vs 16).
+  const NATIVE_MUTE_MAX_DISTANCE = 10;
+  // How long a site's own control gets to change the sound before we set it directly.
+  const NATIVE_MUTE_SETTLE_MS = 250;
   // storage.sync key for the starting speed chosen on the Options page.
   const DEFAULT_SPEED_KEY = 'defaultSpeed';
 
@@ -344,7 +349,7 @@
     const control = document.getElementById(SPEED_CONTROL_ID);
     if (control) updateSpeedControlUI(control, syncVideo.playbackRate);
     // Sites often reset sound as a new video loads; hold the user's choice meanwhile.
-    if (Date.now() < muteGraceUntil) applyMuted(syncVideo, preferredMuted);
+    if (Date.now() < muteGraceUntil) syncMuted(syncVideo);
   }
 
   const TIME_EVENTS = ['timeupdate', 'durationchange', 'loadedmetadata', 'seeked'];
@@ -603,7 +608,7 @@
   function holdMuteChoice() {
     if (preferredMuted === null || !(syncVideo instanceof HTMLVideoElement)) return;
     muteGraceUntil = Date.now() + MUTE_GRACE_MS;
-    applyMuted(syncVideo, preferredMuted);
+    syncMuted(syncVideo);
   }
 
   /**
@@ -639,6 +644,67 @@
     if (!muted && video.volume === 0) video.volume = 1;
   }
 
+  /** How many levels up from `el` before an ancestor also holds `video`. */
+  function distanceToShared(el, video) {
+    let node = el;
+    let levels = 0;
+    while (node && !node.contains(video)) {
+      node = node.parentElement;
+      levels++;
+    }
+    return node ? levels : Infinity;
+  }
+
+  /** The site's own mute toggle for `video`: the `muteSelector` match nearest to it. */
+  function findNativeMuteButton(video) {
+    const selector = getSpeedEntry()?.muteSelector;
+    if (!selector || !(video instanceof HTMLVideoElement)) return null;
+    let best = null;
+    let bestDistance = NATIVE_MUTE_MAX_DISTANCE + 1;
+    for (const el of document.querySelectorAll(selector)) {
+      if (!(el instanceof HTMLElement) || el.closest(`.${FLOATING_CLASS}`)) continue;
+      const distance = distanceToShared(el, video);
+      if (distance < bestDistance) {
+        best = el;
+        bestDistance = distance;
+      }
+    }
+    return best;
+  }
+
+  let nativeMutePending = false;
+
+  /**
+   * Bring `video`'s sound to `preferredMuted`, through the site's own mute control where
+   * there is one. Setting `muted` alone leaves the site believing the old state (its icon,
+   * and the setting it re-applies when a reel loops or the next one starts), which is
+   * what kept re-muting looping Instagram reels. Falls back to setting it directly when
+   * the site has no such control, or pressing it doesn't take.
+   */
+  function syncMuted(video) {
+    if (!(video instanceof HTMLVideoElement) || preferredMuted === null) return;
+    if (nativeMutePending || isSilent(video) === preferredMuted) return;
+
+    const native = findNativeMuteButton(video);
+    // A toggle only helps when `muted` itself is wrong (not a zero volume).
+    if (!native || video.muted === preferredMuted) {
+      applyMuted(video, preferredMuted);
+      return;
+    }
+
+    nativeMutePending = true;
+    native.click();
+    setTimeout(() => {
+      nativeMutePending = false;
+      // Reconcile to the latest choice, which a quick second press may have changed.
+      if (preferredMuted !== null && isSilent(video) !== preferredMuted) {
+        log('log', 'native mute control did not take; setting muted directly');
+        applyMuted(video, preferredMuted);
+      }
+      updateMuteButtonUI(document.getElementById(MUTE_BUTTON_ID), video);
+    }, NATIVE_MUTE_SETTLE_MS);
+  }
+
   /**
    * Right after a video becomes active, a change is the site resetting it (Instagram
    * does this to playbackRate too), so hold the user's choice. After that it is the user
@@ -648,8 +714,8 @@
     if (!(syncVideo instanceof HTMLVideoElement)) return;
     if (preferredMuted !== null) {
       if (Date.now() < muteGraceUntil) {
-        if (isSilent(syncVideo) !== preferredMuted) applyMuted(syncVideo, preferredMuted);
-      } else {
+        syncMuted(syncVideo);
+      } else if (!nativeMutePending) {
         preferredMuted = isSilent(syncVideo);
       }
     }
@@ -661,7 +727,7 @@
     if (!(video instanceof HTMLVideoElement)) return;
     preferredMuted = !isSilent(video);
     muteGraceUntil = 0;
-    applyMuted(video, preferredMuted);
+    syncMuted(video);
     updateMuteButtonUI(document.getElementById(MUTE_BUTTON_ID), video);
   }
 

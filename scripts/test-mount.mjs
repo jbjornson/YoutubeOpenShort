@@ -594,6 +594,76 @@ async function main() {
       await page.close();
     }
 
+    console.log('Mute through the site\'s own control:');
+    {
+      // Two reels, each with its own Instagram-style mute toggle (a role=button inside
+      // the volume slider). Like the real sites, a toggle changes its video's sound a
+      // moment after the click and keeps the site's own idea of muted in data-site-muted.
+      const NATIVE_DOM = `<body style="background:#111;margin:0">
+        ${['a', 'b']
+          .map(
+            (id) => `<div class="reel" style="height:760px"><div><div>
+              <video id="${id}" style="width:400px;height:700px;display:block" muted></video>
+              <div role="slider"><div><div role="button" id="native-${id}" data-site-muted="true" data-clicks="0"></div></div></div>
+            </div></div></div>`
+          )
+          .join('')}
+        <script>
+          for (const b of document.querySelectorAll('[id^=native-]')) {
+            b.addEventListener('click', () => {
+              if (b.dataset.broken) return;
+              b.dataset.clicks = String(Number(b.dataset.clicks) + 1);
+              const muted = b.dataset.siteMuted !== 'true';
+              b.dataset.siteMuted = String(muted);
+              setTimeout(() => { document.getElementById(b.id.slice(7)).muted = muted; }, 30);
+            });
+          }
+        </script>
+      </body>`;
+      const page = await open(browser, 'https://www.instagram.com/reels/', NATIVE_DOM);
+      const st = () =>
+        page.evaluate(() => {
+          const one = (id) => ({
+            muted: document.getElementById(id).muted,
+            site: document.getElementById(`native-${id}`).dataset.siteMuted === 'true',
+            clicks: Number(document.getElementById(`native-${id}`).dataset.clicks),
+          });
+          return { a: one('a'), b: one('b'), pressed: document.getElementById('youtube-open-short-mute').getAttribute('aria-pressed') };
+        });
+      const press = () => page.evaluate(() => document.getElementById('youtube-open-short-mute').click());
+
+      await press();
+      await page.waitForTimeout(400);
+      expect('unmute presses the active reel\'s own toggle, not its neighbour\'s', await st(), {
+        a: { muted: false, site: false, clicks: 1 },
+        b: { muted: true, site: true, clicks: 0 },
+        pressed: 'false',
+      });
+
+      // The site re-applying its own state (as on a loop) now agrees with the user.
+      await page.waitForTimeout(1600);
+      await page.evaluate(() => {
+        const v = document.getElementById('a');
+        v.muted = document.getElementById('native-a').dataset.siteMuted === 'true';
+      });
+      await page.waitForTimeout(100);
+      expect('site re-applying its own state keeps the sound on', (await st()).a, { muted: false, site: false, clicks: 1 });
+
+      await press();
+      await page.waitForTimeout(400);
+      expect('muting goes through the site too', (await st()).a, { muted: true, site: true, clicks: 2 });
+
+      // A toggle that doesn't respond: fall back to setting muted directly.
+      await page.evaluate(() => {
+        document.getElementById('native-a').dataset.broken = '1';
+      });
+      await press();
+      await page.waitForTimeout(400);
+      const broken = await st();
+      expect('unresponsive site toggle falls back to muted directly', { muted: broken.a.muted, pressed: broken.pressed }, { muted: false, pressed: 'false' });
+      await page.close();
+    }
+
     console.log('Default speed from Options:');
     {
       // Stands in for chrome.storage.sync holding a speed saved on the Options page.

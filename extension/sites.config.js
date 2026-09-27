@@ -29,6 +29,15 @@
  *   insertBeforeSelector  optional; control to insert before (else appended)
  *   videoSelector         the media element to control ('selector' strategy only)
  *   position              floating bar offsets, as in openTargets ('floating' only)
+ *   seek                  optional; also show skip buttons (±1/5/10 s) and a position
+ *                         scrubber in the floating bar ('floating' only)
+ *   mute                  optional; also show a mute/unmute button in the floating bar
+ *                         ('floating' only)
+ *   muteSelector          optional; the site's own mute toggle. Our button presses the
+ *                         match nearest the active video, so the site's own mute state
+ *                         (which it re-applies on loop and to the next video) agrees.
+ *                         Without one, or if pressing it doesn't take, `muted` is set
+ *                         directly. Avoid localized aria-labels.
  */
 globalThis.OPEN_SHORT_CONFIG = {
   openTargets: [
@@ -85,6 +94,9 @@ globalThis.OPEN_SHORT_CONFIG = {
       match: '^/shorts/',
       mount: 'floating',
       videoStrategy: 'most-visible',
+      seek: true,
+      mute: true,
+      muteSelector: 'button.ytdVolumeControlsMuteIconButton',
       position: { top: '72px', right: '24px' },
     },
     {
@@ -99,6 +111,11 @@ globalThis.OPEN_SHORT_CONFIG = {
       match: '.',
       mount: 'floating',
       videoStrategy: 'most-visible',
+      seek: true,
+      mute: true,
+      // No language-independent handle (the icon is a sprite), so this matches only
+      // English; other languages fall back to setting `muted` directly.
+      muteSelector: '[role="button"][aria-label="Mute"], [role="button"][aria-label="Unmute"]',
       position: { top: '68px', right: '24px' },
     },
     {
@@ -110,7 +127,28 @@ globalThis.OPEN_SHORT_CONFIG = {
       match: '.',
       mount: 'floating',
       videoStrategy: 'most-visible',
+      seek: true,
+      mute: true,
+      // The speaker icon is a role=button inside the volume slider; both roles are
+      // language-independent, unlike its "Audio is muted" label.
+      muteSelector: '[role="slider"] [role="button"]',
       position: { top: '76px', right: '24px' },
+    },
+    {
+      // Deliberately broad, like facebook-video: the For You feed, video pages, and
+      // profile grids all play video, and TikTok's classes are generated. A video's
+      // own page is already its "regular" page, so TikTok gets no Open button.
+      id: 'tiktok-video',
+      hosts: ['tiktok.com'],
+      match: '.',
+      mount: 'floating',
+      videoStrategy: 'most-visible',
+      seek: true,
+      mute: true,
+      // Generated class names keep the component name; the aria-label is localized.
+      muteSelector: '[class*="DivVolumeControlContainer"] button',
+      // Below the top-right Upload / Log in buttons.
+      position: { top: '72px', right: '24px' },
     },
   ],
 };

@@ -43,6 +43,12 @@ const CASES = [
   ['https://instagram.com/reels/DcwGOO6kd6g/?igsh=x', 'https://www.instagram.com/p/DcwGOO6kd6g/', 'instagram-video'],
   ['https://www.instagram.com/p/DcwGOO6kd6g/', null, 'instagram-video'],
   ['https://www.instagram.com/', null, 'instagram-video'],
+  // TikTok: no Open button (a video's own page is already its regular page); every
+  // tiktok.com page matches the speed entry, rendered only when a video is on screen.
+  ['https://www.tiktok.com/foryou', null, 'tiktok-video'],
+  ['https://www.tiktok.com/@scout2015/video/6718335390845095173', null, 'tiktok-video'],
+  ['https://m.tiktok.com/@scout2015', null, 'tiktok-video'],
+  ['https://nottiktok.com/foryou', null, null],
   // Host guard: the path alone is not enough
   ['https://example.com/reel/123', null, null],
   ['https://notfacebook.com/reel/123', null, null],

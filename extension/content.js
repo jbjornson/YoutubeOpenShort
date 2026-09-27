@@ -4,7 +4,7 @@
   if (window.__youtubeOpenShortLoaded) return;
   window.__youtubeOpenShortLoaded = true;
 
-  const VERSION = '0.9.0';
+  const VERSION = '1.0.0';
   const LOG_PREFIX = '[YoutubeOpenShort]';
   const BUTTON_ID = 'youtube-open-short-button';
   const FLOATING_CLASS = 'youtube-open-short-floating';
@@ -14,12 +14,27 @@
   const SPEED_STEP = 0.05;
   const SPEED_TICK = 0.25;
   const SPEED_PRESETS = [0.5, 1.0, 1.25, 1.5, 1.75, 2.0];
+  const SEEK_CONTROL_ID = 'youtube-open-short-seek';
+  const SEEK_STEPS = [-10, -5, -1, 1, 5, 10];
+  // Chevrons drawn on each seek button, by step size in seconds.
+  const SEEK_CHEVRONS = { 1: 1, 5: 2, 10: 3 };
+  const MUTE_BUTTON_ID = 'youtube-open-short-mute';
+  // How long after a video becomes active a mute change is taken as the site resetting
+  // it rather than the user choosing.
+  const MUTE_GRACE_MS = 1500;
+  // A site's own mute control this many levels up from the active video still belongs
+  // to it; further out it belongs to a neighbouring reel (Instagram: 8 vs 16).
+  const NATIVE_MUTE_MAX_DISTANCE = 10;
+  // How long a site's own control gets to change the sound before we set it directly.
+  const NATIVE_MUTE_SETTLE_MS = 250;
   // storage.sync key for the starting speed chosen on the Options page.
   const DEFAULT_SPEED_KEY = 'defaultSpeed';
 
   // Widget order inside the shared floating bar.
   const ORDER_OPEN = 1;
-  const ORDER_SPEED = 2;
+  const ORDER_MUTE = 2;
+  const ORDER_SPEED = 3;
+  const ORDER_SEEK = 4;
 
   // A video smaller than this is chrome or a hidden decoy, not the one being watched.
   // Shorts pages keep a 0x0 <video> alongside the real one.
@@ -169,6 +184,11 @@
       activeVideo: describeEl(activeVideo),
       videoPickScore: speedEntry?.videoStrategy === 'most-visible' ? lastPickScore : null,
       playbackRate: activeVideo?.playbackRate ?? null,
+      seekControl: describeEl(document.getElementById(SEEK_CONTROL_ID)),
+      muteButton: describeEl(document.getElementById(MUTE_BUTTON_ID)),
+      muted: activeVideo?.muted ?? null,
+      currentTime: activeVideo?.currentTime ?? null,
+      duration: activeVideo?.duration ?? null,
     };
   }
 
@@ -293,7 +313,7 @@
     return clamped;
   }
 
-  let rateSyncVideo = null;
+  let syncVideo = null;
   let preferredSpeed = 1;
 
   /**
@@ -308,45 +328,64 @@
    * adopted as the new preference there.
    */
   function onVideoRateChange() {
-    if (!(rateSyncVideo instanceof HTMLVideoElement)) return;
+    if (!(syncVideo instanceof HTMLVideoElement)) return;
     const entry = getSpeedEntry();
     if (entry?.mount === 'floating') {
-      if (Math.abs(rateSyncVideo.playbackRate - preferredSpeed) > 0.001) {
-        rateSyncVideo.playbackRate = preferredSpeed;
+      if (Math.abs(syncVideo.playbackRate - preferredSpeed) > 0.001) {
+        syncVideo.playbackRate = preferredSpeed;
       }
       return;
     }
-    preferredSpeed = clampSpeed(rateSyncVideo.playbackRate);
+    preferredSpeed = clampSpeed(syncVideo.playbackRate);
     const control = document.getElementById(SPEED_CONTROL_ID);
-    if (control) updateSpeedControlUI(control, rateSyncVideo.playbackRate);
+    if (control) updateSpeedControlUI(control, syncVideo.playbackRate);
   }
 
   function onVideoReady() {
-    if (!(rateSyncVideo instanceof HTMLVideoElement)) return;
-    if (Math.abs(rateSyncVideo.playbackRate - preferredSpeed) > 0.001) {
-      rateSyncVideo.playbackRate = preferredSpeed;
+    if (!(syncVideo instanceof HTMLVideoElement)) return;
+    if (Math.abs(syncVideo.playbackRate - preferredSpeed) > 0.001) {
+      syncVideo.playbackRate = preferredSpeed;
     }
     const control = document.getElementById(SPEED_CONTROL_ID);
-    if (control) updateSpeedControlUI(control, rateSyncVideo.playbackRate);
+    if (control) updateSpeedControlUI(control, syncVideo.playbackRate);
+    // Sites often reset sound as a new video loads; hold the user's choice meanwhile.
+    if (Date.now() < muteGraceUntil) syncMuted(syncVideo);
   }
 
-  function ensureRateSync() {
-    const video = getActiveVideo();
-    if (video === rateSyncVideo) return;
+  const TIME_EVENTS = ['timeupdate', 'durationchange', 'loadedmetadata', 'seeked'];
 
-    if (rateSyncVideo instanceof HTMLVideoElement) {
-      rateSyncVideo.removeEventListener('ratechange', onVideoRateChange);
-      rateSyncVideo.removeEventListener('loadedmetadata', onVideoReady);
-      rateSyncVideo.removeEventListener('canplay', onVideoReady);
+  function unbindSyncVideo() {
+    if (syncVideo instanceof HTMLVideoElement) {
+      syncVideo.removeEventListener('ratechange', onVideoRateChange);
+      syncVideo.removeEventListener('loadedmetadata', onVideoReady);
+      syncVideo.removeEventListener('canplay', onVideoReady);
+      syncVideo.removeEventListener('volumechange', onVideoVolumeChange);
+      for (const type of RESTART_EVENTS) syncVideo.removeEventListener(type, onVideoRestart);
+      for (const type of TIME_EVENTS) syncVideo.removeEventListener(type, onVideoTime);
     }
+    syncVideo = null;
+  }
 
-    rateSyncVideo = video instanceof HTMLVideoElement ? video : null;
+  /** Follow the active video's rate, sound, and position; rebinds when it changes. */
+  function ensureVideoSync() {
+    const video = getActiveVideo();
+    if (video === syncVideo) return;
 
-    if (rateSyncVideo) {
-      rateSyncVideo.addEventListener('ratechange', onVideoRateChange);
-      rateSyncVideo.addEventListener('loadedmetadata', onVideoReady);
-      rateSyncVideo.addEventListener('canplay', onVideoReady);
+    unbindSyncVideo();
+    syncVideo = video instanceof HTMLVideoElement ? video : null;
+
+    if (syncVideo) {
+      syncVideo.addEventListener('ratechange', onVideoRateChange);
+      syncVideo.addEventListener('loadedmetadata', onVideoReady);
+      syncVideo.addEventListener('canplay', onVideoReady);
+      syncVideo.addEventListener('volumechange', onVideoVolumeChange);
+      for (const type of RESTART_EVENTS) syncVideo.addEventListener(type, onVideoRestart);
+      lastPlayhead = syncVideo.currentTime;
+      for (const type of TIME_EVENTS) syncVideo.addEventListener(type, onVideoTime);
+      holdMuteChoice();
       onVideoReady();
+      onVideoTime();
+      updateMuteButtonUI(document.getElementById(MUTE_BUTTON_ID), syncVideo);
     }
   }
 
@@ -444,13 +483,9 @@
 
   function removeSpeedControl() {
     document.getElementById(SPEED_CONTROL_ID)?.remove();
-    removeFloatingBarIfEmpty();
-    if (rateSyncVideo instanceof HTMLVideoElement) {
-      rateSyncVideo.removeEventListener('ratechange', onVideoRateChange);
-      rateSyncVideo.removeEventListener('loadedmetadata', onVideoReady);
-      rateSyncVideo.removeEventListener('canplay', onVideoReady);
-    }
-    rateSyncVideo = null;
+    removeMuteButton();
+    removeSeekControl();
+    unbindSyncVideo();
   }
 
   /** Speed control in the shared floating bar, for players with no usable control bar. */
@@ -478,7 +513,13 @@
       });
     }
 
-    ensureRateSync();
+    if (entry.mute) mountMuteButton(entry);
+    else removeMuteButton();
+
+    if (entry.seek) mountSeekControl(entry);
+    else removeSeekControl();
+
+    ensureVideoSync();
   }
 
   function mountSpeedControl() {
@@ -549,7 +590,350 @@
       }
     }
 
-    ensureRateSync();
+    ensureVideoSync();
+  }
+
+  // --- Mute button ----------------------------------------------------------
+  // The sites' own mute toggles are small overlaid icons (or, on Instagram, a tap on the
+  // reel); this puts one in the floating bar. The choice carries to the next video.
+
+  // null until the user presses our button; until then sound is left to the site.
+  let preferredMuted = null;
+  let muteGraceUntil = 0;
+  let lastPlayhead = 0;
+
+  const RESTART_EVENTS = ['seeking', 'play', 'timeupdate'];
+
+  /** Re-assert the user's choice and give the site's reset the same grace as a new video. */
+  function holdMuteChoice() {
+    if (preferredMuted === null || !(syncVideo instanceof HTMLVideoElement)) return;
+    muteGraceUntil = Date.now() + MUTE_GRACE_MS;
+    syncMuted(syncVideo);
+  }
+
+  /**
+   * A looping reel starts over, and the sites re-apply their own sound setting as it
+   * does (seen on Instagram), long after the new-video grace has run out. Treat a
+   * restart like a new video. Loops show up as `seeking` back to the start (the `loop`
+   * attribute, or a site rewinding by hand), `play` after a site-driven replay, or just
+   * the playhead wrapping round between two timeupdates.
+   */
+  function onVideoRestart(event) {
+    if (!(syncVideo instanceof HTMLVideoElement)) return;
+    const t = syncVideo.currentTime;
+    const wrapped = event.type === 'timeupdate' && t + 1 < lastPlayhead && t < 1;
+    lastPlayhead = t;
+    if (event.type === 'timeupdate' && !wrapped) return;
+    if (event.type === 'seeking' && t >= 1) return;
+    holdMuteChoice();
+  }
+
+  const SPEAKER_PATH =
+    'M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 7.97v8.05A4.5 4.5 0 0 0 16.5 12zM14 3.23v2.06a7 7 0 0 1 0 13.42v2.06a9 9 0 0 0 0-17.54z';
+  const SPEAKER_MUTED_PATH =
+    'M3 9v6h4l5 5V4L7 9H3zm13.59 3l2.7-2.7-1.41-1.41-2.7 2.7-2.7-2.7-1.41 1.41 2.7 2.7-2.7 2.7 1.41 1.41 2.7-2.7 2.7 2.7 1.41-1.41-2.7-2.7z';
+
+  function isSilent(video) {
+    return video instanceof HTMLVideoElement && (video.muted || video.volume === 0);
+  }
+
+  function applyMuted(video, muted) {
+    if (!(video instanceof HTMLVideoElement) || muted === null) return;
+    if (video.muted !== muted) video.muted = muted;
+    // Unmuted at zero volume is still silent.
+    if (!muted && video.volume === 0) video.volume = 1;
+  }
+
+  /** How many levels up from `el` before an ancestor also holds `video`. */
+  function distanceToShared(el, video) {
+    let node = el;
+    let levels = 0;
+    while (node && !node.contains(video)) {
+      node = node.parentElement;
+      levels++;
+    }
+    return node ? levels : Infinity;
+  }
+
+  /** The site's own mute toggle for `video`: the `muteSelector` match nearest to it. */
+  function findNativeMuteButton(video) {
+    const selector = getSpeedEntry()?.muteSelector;
+    if (!selector || !(video instanceof HTMLVideoElement)) return null;
+    let best = null;
+    let bestDistance = NATIVE_MUTE_MAX_DISTANCE + 1;
+    for (const el of document.querySelectorAll(selector)) {
+      if (!(el instanceof HTMLElement) || el.closest(`.${FLOATING_CLASS}`)) continue;
+      const distance = distanceToShared(el, video);
+      if (distance < bestDistance) {
+        best = el;
+        bestDistance = distance;
+      }
+    }
+    return best;
+  }
+
+  let nativeMutePending = false;
+
+  /**
+   * Bring `video`'s sound to `preferredMuted`, through the site's own mute control where
+   * there is one. Setting `muted` alone leaves the site believing the old state (its icon,
+   * and the setting it re-applies when a reel loops or the next one starts), which is
+   * what kept re-muting looping Instagram reels. Falls back to setting it directly when
+   * the site has no such control, or pressing it doesn't take.
+   */
+  function syncMuted(video) {
+    if (!(video instanceof HTMLVideoElement) || preferredMuted === null) return;
+    if (nativeMutePending || isSilent(video) === preferredMuted) return;
+
+    const native = findNativeMuteButton(video);
+    // A toggle only helps when `muted` itself is wrong (not a zero volume).
+    if (!native || video.muted === preferredMuted) {
+      applyMuted(video, preferredMuted);
+      return;
+    }
+
+    nativeMutePending = true;
+    native.click();
+    setTimeout(() => {
+      nativeMutePending = false;
+      // Reconcile to the latest choice, which a quick second press may have changed.
+      if (preferredMuted !== null && isSilent(video) !== preferredMuted) {
+        log('log', 'native mute control did not take; setting muted directly');
+        applyMuted(video, preferredMuted);
+      }
+      updateMuteButtonUI(document.getElementById(MUTE_BUTTON_ID), video);
+    }, NATIVE_MUTE_SETTLE_MS);
+  }
+
+  /**
+   * Right after a video becomes active, a change is the site resetting it (Instagram
+   * does this to playbackRate too), so hold the user's choice. After that it is the user
+   * reaching for the site's own control, e.g. tapping a reel, and becomes the new choice.
+   */
+  function onVideoVolumeChange() {
+    if (!(syncVideo instanceof HTMLVideoElement)) return;
+    if (preferredMuted !== null) {
+      if (Date.now() < muteGraceUntil) {
+        syncMuted(syncVideo);
+      } else if (!nativeMutePending) {
+        preferredMuted = isSilent(syncVideo);
+      }
+    }
+    updateMuteButtonUI(document.getElementById(MUTE_BUTTON_ID), syncVideo);
+  }
+
+  function toggleMute() {
+    const video = getActiveVideo();
+    if (!(video instanceof HTMLVideoElement)) return;
+    preferredMuted = !isSilent(video);
+    muteGraceUntil = 0;
+    syncMuted(video);
+    updateMuteButtonUI(document.getElementById(MUTE_BUTTON_ID), video);
+  }
+
+  function updateMuteButtonUI(button, video) {
+    if (!(button instanceof HTMLElement)) return;
+    const silent = isSilent(video);
+    const label = silent ? 'Unmute' : 'Mute';
+    button.title = label;
+    button.setAttribute('aria-label', label);
+    button.setAttribute('aria-pressed', String(silent));
+    button.querySelector('path')?.setAttribute('d', silent ? SPEAKER_MUTED_PATH : SPEAKER_PATH);
+  }
+
+  function createMuteButton() {
+    const button = document.createElement('button');
+    button.id = MUTE_BUTTON_ID;
+    button.type = 'button';
+
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('aria-hidden', 'true');
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('fill', 'currentColor');
+    svg.appendChild(path);
+    button.appendChild(svg);
+
+    button.addEventListener('click', toggleMute);
+    // Keep the sites' own handlers from treating clicks here as play/pause or a swipe.
+    for (const type of ['mousedown', 'pointerdown', 'click', 'touchstart']) {
+      button.addEventListener(type, (event) => event.stopPropagation());
+    }
+    return button;
+  }
+
+  function mountMuteButton(entry) {
+    let button = document.getElementById(MUTE_BUTTON_ID);
+    const created = !button;
+    if (!button) button = createMuteButton();
+
+    const moved = mountIntoBar(ensureFloatingBar(), button, ORDER_MUTE);
+    if (created || moved) logMountResult('mute:mounted:floating', { created, entryId: entry.id });
+    updateMuteButtonUI(button, syncVideo || getActiveVideo());
+  }
+
+  function removeMuteButton() {
+    document.getElementById(MUTE_BUTTON_ID)?.remove();
+    removeFloatingBarIfEmpty();
+  }
+
+  // --- Seek controls --------------------------------------------------------
+  // Skip buttons and a position scrubber, for players that offer neither (Instagram)
+  // or hide them. Floating bar only; YouTube watch pages have native seeking.
+
+  let scrubbing = false;
+
+  function formatTime(seconds) {
+    const total = Math.max(0, Math.floor(seconds || 0));
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = String(total % 60).padStart(2, '0');
+    return h ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`;
+  }
+
+  function updateSeekControlUI(control, video) {
+    if (!(control instanceof HTMLElement)) return;
+    const slider = control.querySelector('input[type="range"]');
+    const readout = control.querySelector('.youtube-open-short-seek-readout');
+    const current = video instanceof HTMLVideoElement ? video.currentTime : 0;
+    const duration = video instanceof HTMLVideoElement ? video.duration : NaN;
+    // Live streams report Infinity and unloaded media NaN; neither can be scrubbed.
+    const seekable = Number.isFinite(duration) && duration > 0;
+
+    if (slider instanceof HTMLInputElement) {
+      slider.disabled = !seekable;
+      if (seekable) {
+        if (slider.max !== String(duration)) slider.max = String(duration);
+        if (!scrubbing) slider.value = String(current);
+      } else {
+        slider.value = '0';
+      }
+    }
+    if (readout instanceof HTMLElement) {
+      readout.textContent = seekable
+        ? `${formatTime(current)} / ${formatTime(duration)}`
+        : formatTime(current);
+    }
+  }
+
+  function onVideoTime() {
+    const control = document.getElementById(SEEK_CONTROL_ID);
+    if (control) updateSeekControlUI(control, syncVideo);
+  }
+
+  function seekTo(time) {
+    const video = getActiveVideo();
+    if (!(video instanceof HTMLVideoElement)) return;
+    const end = Number.isFinite(video.duration) ? video.duration : Infinity;
+    video.currentTime = Math.min(end, Math.max(0, time));
+    updateSeekControlUI(document.getElementById(SEEK_CONTROL_ID), video);
+  }
+
+  function seekBy(delta) {
+    const video = getActiveVideo();
+    if (video instanceof HTMLVideoElement) seekTo(video.currentTime + delta);
+  }
+
+  /** `count` right-pointing chevrons (mirrored when `back`), in the button's text colour. */
+  function appendChevrons(target, count, back) {
+    const NS = 'http://www.w3.org/2000/svg';
+    const width = 6 + count * 6;
+    const svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('viewBox', `0 0 ${width} 12`);
+    svg.setAttribute('width', String(width));
+    svg.setAttribute('height', '12');
+    svg.setAttribute('aria-hidden', 'true');
+    const g = document.createElementNS(NS, 'g');
+    g.setAttribute('fill', 'none');
+    g.setAttribute('stroke', 'currentColor');
+    g.setAttribute('stroke-width', '2');
+    g.setAttribute('stroke-linecap', 'round');
+    g.setAttribute('stroke-linejoin', 'round');
+    if (back) g.setAttribute('transform', `translate(${width} 0) scale(-1 1)`);
+    for (let i = 0; i < count; i++) {
+      const path = document.createElementNS(NS, 'path');
+      path.setAttribute('d', `M${2 + i * 6} 2l4 4-4 4`);
+      g.appendChild(path);
+    }
+    svg.appendChild(g);
+    target.appendChild(svg);
+  }
+
+  function createSeekButton(step) {
+    const seconds = Math.abs(step);
+    const label = `${step < 0 ? 'Back' : 'Forward'} ${seconds} second${seconds === 1 ? '' : 's'}`;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'youtube-open-short-seek-button';
+    button.dataset.step = String(step);
+    appendChevrons(button, SEEK_CHEVRONS[seconds] || 1, step < 0);
+    button.title = label;
+    button.setAttribute('aria-label', label);
+    button.addEventListener('click', () => seekBy(step));
+    return button;
+  }
+
+  function createSeekControl() {
+    const control = document.createElement('div');
+    control.id = SEEK_CONTROL_ID;
+    control.className = 'youtube-open-short-seek-control';
+    control.setAttribute('role', 'group');
+    control.setAttribute('aria-label', 'Seek');
+
+    const row = document.createElement('div');
+    row.className = 'youtube-open-short-seek-row';
+    for (const step of SEEK_STEPS.filter((s) => s < 0)) row.appendChild(createSeekButton(step));
+
+    const readout = document.createElement('span');
+    readout.className = 'youtube-open-short-seek-readout';
+    readout.textContent = '0:00';
+    row.appendChild(readout);
+
+    for (const step of SEEK_STEPS.filter((s) => s > 0)) row.appendChild(createSeekButton(step));
+
+    const slider = document.createElement('input');
+    slider.type = 'range';
+    slider.min = '0';
+    slider.max = '1';
+    slider.step = '0.1';
+    slider.value = '0';
+    slider.setAttribute('aria-label', 'Position');
+    // While dragging, timeupdate must not pull the thumb back to the playhead.
+    const endScrub = () => {
+      scrubbing = false;
+    };
+    slider.addEventListener('pointerdown', () => {
+      scrubbing = true;
+    });
+    slider.addEventListener('pointerup', endScrub);
+    slider.addEventListener('pointercancel', endScrub);
+    slider.addEventListener('change', endScrub);
+    slider.addEventListener('input', () => seekTo(parseFloat(slider.value)));
+
+    // Keep the sites' own handlers from treating clicks here as play/pause or a swipe.
+    for (const type of ['mousedown', 'pointerdown', 'click', 'touchstart']) {
+      control.addEventListener(type, (event) => event.stopPropagation());
+    }
+
+    control.appendChild(row);
+    control.appendChild(slider);
+    return control;
+  }
+
+  function mountSeekControl(entry) {
+    let control = document.getElementById(SEEK_CONTROL_ID);
+    const created = !control;
+    if (!control) control = createSeekControl();
+
+    const moved = mountIntoBar(ensureFloatingBar(), control, ORDER_SEEK);
+    if (created || moved) logMountResult('seek:mounted:floating', { created, entryId: entry.id });
+    if (created) updateSeekControlUI(control, syncVideo);
+  }
+
+  function removeSeekControl() {
+    document.getElementById(SEEK_CONTROL_ID)?.remove();
+    scrubbing = false;
+    removeFloatingBarIfEmpty();
   }
 
   // --- Shared floating bar --------------------------------------------------
@@ -695,6 +1079,7 @@
           }
         : null,
       preferredSpeed,
+      preferredMuted,
       debugEnabled: isDebugEnabled(),
     };
     console.log(`${LOG_PREFIX} dumpState v${VERSION}`, state);

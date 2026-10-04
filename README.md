@@ -34,6 +34,10 @@ Works in **Google Chrome**, **Dia**, and other Chromium-based browsers that supp
 
 ### Chrome / Dia / Edge / Brave
 
+**From a release:** download `shorts-reels-as-video-chrome-<version>.zip` from [Releases](https://github.com/jbjornson/YoutubeOpenShort/releases) and unzip it. Then follow steps 2–4 below, choosing the unzipped folder in step 4. To update, replace the folder's contents with the new release and click the reload icon on the extension's card.
+
+**From source:**
+
 1. Clone or download this repository.
 2. Open your browser’s extensions page:
    - Chrome: `chrome://extensions`
@@ -119,11 +123,19 @@ npm run test:watch     # Playwright watch-page speed slider smoke test
 npm run build:icons    # Regenerate PNGs from extension/icons/icon.svg
 ```
 
-To package a release zip:
+To build release zips locally (`dist/shorts-reels-as-video-chrome-<version>.zip` and `-firefox-<version>.zip`):
 
 ```bash
-cd extension && zip -r ../YoutubeOpenShort.zip .
+npm run package
 ```
+
+### Releasing
+
+1. Bump `version` in both `extension/manifest.json` and `extension/manifest.json.firefox`, and add a `### <version>` entry to the changelog below.
+2. Merge to `main`.
+3. Run `npm run release` (or `node scripts/release.mjs --dry-run` to check first). It refuses a dirty tree, a branch other than `main`, an existing tag, or a missing changelog entry. Then it tags `v<version>` and pushes the tag.
+4. The [Release workflow](.github/workflows/release.yml) builds both zips and publishes a GitHub Release, using the changelog entry as the release notes.
+5. For the Chrome Web Store, upload the Chrome zip from the release in the [developer dashboard](https://chrome.google.com/webstore/devconsole). The first upload needs a one-time developer registration, a store listing, a privacy policy, and a justification for the `storage` permission and each host permission.
 
 ### Debugging
 

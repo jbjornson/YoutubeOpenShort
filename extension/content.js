@@ -27,10 +27,19 @@
   const NATIVE_MUTE_MAX_DISTANCE = 10;
   // How long a site's own control gets to change the sound before we set it directly.
   const NATIVE_MUTE_SETTLE_MS = 250;
+  const PLAY_BUTTON_ID = 'youtube-open-short-play';
+  const GRIP_ID = 'youtube-open-short-grip';
+  const DRAGGING_CLASS = 'youtube-open-short-dragging';
+  // How far one arrow-key press on the grip moves the bar.
+  const GRIP_NUDGE_PX = 10;
   // storage.sync key for the starting speed chosen on the Options page.
   const DEFAULT_SPEED_KEY = 'defaultSpeed';
+  // storage.local key for where the user dragged the bar, by hostname. Local, not sync:
+  // a position only makes sense on the screen it was chosen on.
+  const BAR_POSITIONS_KEY = 'barPositions';
 
   // Widget order inside the shared floating bar.
+  const ORDER_GRIP = 0;
   const ORDER_OPEN = 1;
   const ORDER_MUTE = 2;
   const ORDER_SPEED = 3;
@@ -187,6 +196,10 @@
       seekControl: describeEl(document.getElementById(SEEK_CONTROL_ID)),
       muteButton: describeEl(document.getElementById(MUTE_BUTTON_ID)),
       muted: activeVideo?.muted ?? null,
+      playButton: describeEl(document.getElementById(PLAY_BUTTON_ID)),
+      paused: activeVideo?.paused ?? null,
+      ended: activeVideo?.ended ?? null,
+      barPosition: savedBarPosition,
       currentTime: activeVideo?.currentTime ?? null,
       duration: activeVideo?.duration ?? null,
     };
@@ -353,6 +366,7 @@
   }
 
   const TIME_EVENTS = ['timeupdate', 'durationchange', 'loadedmetadata', 'seeked'];
+  const PLAY_EVENTS = ['play', 'playing', 'pause', 'ended', 'emptied'];
 
   function unbindSyncVideo() {
     if (syncVideo instanceof HTMLVideoElement) {
@@ -362,6 +376,7 @@
       syncVideo.removeEventListener('volumechange', onVideoVolumeChange);
       for (const type of RESTART_EVENTS) syncVideo.removeEventListener(type, onVideoRestart);
       for (const type of TIME_EVENTS) syncVideo.removeEventListener(type, onVideoTime);
+      for (const type of PLAY_EVENTS) syncVideo.removeEventListener(type, onVideoPlayState);
     }
     syncVideo = null;
   }
@@ -382,17 +397,24 @@
       for (const type of RESTART_EVENTS) syncVideo.addEventListener(type, onVideoRestart);
       lastPlayhead = syncVideo.currentTime;
       for (const type of TIME_EVENTS) syncVideo.addEventListener(type, onVideoTime);
+      for (const type of PLAY_EVENTS) syncVideo.addEventListener(type, onVideoPlayState);
       holdMuteChoice();
       onVideoReady();
       onVideoTime();
       updateMuteButtonUI(document.getElementById(MUTE_BUTTON_ID), syncVideo);
+      onVideoPlayState();
     }
+  }
+
+  /** An extension storage area ('sync' or 'local'), or undefined outside the extension. */
+  function storageArea(name) {
+    // Firefox's promise-based `browser` namespace first; Chrome MV3's `chrome` also returns promises.
+    return globalThis.browser?.storage?.[name] ?? globalThis.chrome?.storage?.[name];
   }
 
   /** The starting speed saved on the Options page, or 1 when unset or unavailable. */
   async function loadDefaultSpeed() {
-    // Firefox's promise-based `browser` namespace first; Chrome MV3's `chrome` also returns promises.
-    const storage = globalThis.browser?.storage?.sync ?? globalThis.chrome?.storage?.sync;
+    const storage = storageArea('sync');
     if (!storage) return 1;
     try {
       const stored = await storage.get(DEFAULT_SPEED_KEY);
@@ -794,7 +816,8 @@
   function updateSeekControlUI(control, video) {
     if (!(control instanceof HTMLElement)) return;
     const slider = control.querySelector('input[type="range"]');
-    const readout = control.querySelector('.youtube-open-short-seek-readout');
+    const currentReadout = control.querySelector('.youtube-open-short-seek-current');
+    const durationReadout = control.querySelector('.youtube-open-short-seek-duration');
     const current = video instanceof HTMLVideoElement ? video.currentTime : 0;
     const duration = video instanceof HTMLVideoElement ? video.duration : NaN;
     // Live streams report Infinity and unloaded media NaN; neither can be scrubbed.
@@ -809,10 +832,9 @@
         slider.value = '0';
       }
     }
-    if (readout instanceof HTMLElement) {
-      readout.textContent = seekable
-        ? `${formatTime(current)} / ${formatTime(duration)}`
-        : formatTime(current);
+    if (currentReadout instanceof HTMLElement) currentReadout.textContent = formatTime(current);
+    if (durationReadout instanceof HTMLElement) {
+      durationReadout.textContent = seekable ? formatTime(duration) : '';
     }
   }
 
@@ -873,6 +895,68 @@
     return button;
   }
 
+  // --- Play/pause button ----------------------------------------------------
+  // Sits in the middle of the seek row. Unlike mute it is not a carried-over choice: it
+  // shows what the active video is doing, so a new reel still autoplays as the site intends.
+
+  const PLAY_PATH = 'M8 5v14l11-7z';
+  const PAUSE_PATH = 'M6 19h4V5H6v14zm8-14v14h4V5h-4z';
+  const REPLAY_PATH =
+    'M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z';
+
+  function playState(video) {
+    if (!(video instanceof HTMLVideoElement)) return 'paused';
+    if (video.ended) return 'ended';
+    return video.paused ? 'paused' : 'playing';
+  }
+
+  function updatePlayButtonUI(button, video) {
+    if (!(button instanceof HTMLElement)) return;
+    const state = playState(video);
+    const label = state === 'playing' ? 'Pause' : state === 'ended' ? 'Replay' : 'Play';
+    const path = state === 'playing' ? PAUSE_PATH : state === 'ended' ? REPLAY_PATH : PLAY_PATH;
+    button.title = label;
+    button.setAttribute('aria-label', label);
+    button.dataset.state = state;
+    button.querySelector('path')?.setAttribute('d', path);
+  }
+
+  function onVideoPlayState() {
+    updatePlayButtonUI(document.getElementById(PLAY_BUTTON_ID), syncVideo);
+  }
+
+  function togglePlay() {
+    const video = getActiveVideo();
+    if (!(video instanceof HTMLVideoElement)) return;
+    if (video.paused || video.ended) {
+      if (video.ended) video.currentTime = 0;
+      // Refused when the site or browser blocks playback; the button just stays on Play.
+      video.play()?.catch((err) => log('warn', 'play() was refused', { error: String(err) }));
+    } else {
+      video.pause();
+    }
+    updatePlayButtonUI(document.getElementById(PLAY_BUTTON_ID), video);
+  }
+
+  function createPlayButton() {
+    const button = document.createElement('button');
+    button.id = PLAY_BUTTON_ID;
+    button.type = 'button';
+
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('aria-hidden', 'true');
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('fill', 'currentColor');
+    svg.appendChild(path);
+    button.appendChild(svg);
+
+    // The seek control around it already keeps clicks from reaching the site.
+    button.addEventListener('click', togglePlay);
+    updatePlayButtonUI(button, syncVideo);
+    return button;
+  }
+
   function createSeekControl() {
     const control = document.createElement('div');
     control.id = SEEK_CONTROL_ID;
@@ -883,13 +967,17 @@
     const row = document.createElement('div');
     row.className = 'youtube-open-short-seek-row';
     for (const step of SEEK_STEPS.filter((s) => s < 0)) row.appendChild(createSeekButton(step));
-
-    const readout = document.createElement('span');
-    readout.className = 'youtube-open-short-seek-readout';
-    readout.textContent = '0:00';
-    row.appendChild(readout);
-
+    row.appendChild(createPlayButton());
     for (const step of SEEK_STEPS.filter((s) => s > 0)) row.appendChild(createSeekButton(step));
+
+    // Position and length either side of the scrubber.
+    const scrubRow = document.createElement('div');
+    scrubRow.className = 'youtube-open-short-scrub-row';
+    const currentReadout = document.createElement('span');
+    currentReadout.className = 'youtube-open-short-seek-readout youtube-open-short-seek-current';
+    currentReadout.textContent = '0:00';
+    const durationReadout = document.createElement('span');
+    durationReadout.className = 'youtube-open-short-seek-readout youtube-open-short-seek-duration';
 
     const slider = document.createElement('input');
     slider.type = 'range';
@@ -915,8 +1003,12 @@
       control.addEventListener(type, (event) => event.stopPropagation());
     }
 
+    scrubRow.appendChild(currentReadout);
+    scrubRow.appendChild(slider);
+    scrubRow.appendChild(durationReadout);
+
     control.appendChild(row);
-    control.appendChild(slider);
+    control.appendChild(scrubRow);
     return control;
   }
 
@@ -940,8 +1032,13 @@
   // The Open button and the floating speed slider share one container, so pages that
   // show both (Shorts, Reels) get a single control rather than two overlapping ones.
 
-  /** The Open button's position wins; otherwise a floating speed entry supplies it. */
+  /**
+   * Where the user dragged the bar on this site wins; then the Open button's position;
+   * otherwise a floating speed entry supplies it.
+   */
   function resolveBarPosition() {
+    if (savedBarPosition) return savedBarPosition;
+
     const openEntry = getOpenEntry();
     if (openEntry?.position) return openEntry.position;
 
@@ -958,16 +1055,21 @@
       bar.className = FLOATING_CLASS;
       bar.setAttribute('data-youtube-open-short', '1');
     }
+    if (!document.getElementById(GRIP_ID)) mountIntoBar(bar, createGrip(), ORDER_GRIP);
     if (bar.parentElement !== document.documentElement) {
       document.documentElement.appendChild(bar);
     }
 
-    const position = resolveBarPosition();
+    // Mid-drag, the pointer owns the position.
+    if (!bar.classList.contains(DRAGGING_CLASS)) applyBarPosition(bar, resolveBarPosition());
+    return bar;
+  }
+
+  function applyBarPosition(bar, position) {
     for (const side of ['top', 'right', 'bottom', 'left']) {
       if (position[side]) bar.style.setProperty(`--yos-${side}`, String(position[side]));
       else bar.style.removeProperty(`--yos-${side}`);
     }
-    return bar;
   }
 
   /** Insert `el` into the bar at its configured slot. Returns true if it moved. */
@@ -983,7 +1085,166 @@
 
   function removeFloatingBarIfEmpty() {
     const bar = document.querySelector(`.${FLOATING_CLASS}`);
-    if (bar && !bar.children.length) bar.remove();
+    // The grip alone is nothing to show.
+    if (bar && ![...bar.children].some((child) => child.id !== GRIP_ID)) bar.remove();
+  }
+
+  // --- Moving the bar -------------------------------------------------------
+  // A grip at the bar's start drags it anywhere on screen; the spot is kept per site.
+  // It is saved as offsets from the nearest edges, so the bar grows away from the
+  // edge it was put against and stays on screen when the window is resized.
+
+  let savedBarPosition = null;
+  let drag = null;
+
+  async function loadBarPosition() {
+    const storage = storageArea('local');
+    if (!storage) return null;
+    try {
+      const stored = await storage.get(BAR_POSITIONS_KEY);
+      return stored?.[BAR_POSITIONS_KEY]?.[location.hostname] || null;
+    } catch (err) {
+      log('warn', 'could not read bar position', { error: String(err) });
+      return null;
+    }
+  }
+
+  /** Remember `position` for this site, or forget it when null. */
+  async function saveBarPosition(position) {
+    savedBarPosition = position;
+    const storage = storageArea('local');
+    if (!storage) return;
+    try {
+      const stored = await storage.get(BAR_POSITIONS_KEY);
+      const all = { ...(stored?.[BAR_POSITIONS_KEY] || {}) };
+      if (position) all[location.hostname] = position;
+      else delete all[location.hostname];
+      await storage.set({ [BAR_POSITIONS_KEY]: all });
+    } catch (err) {
+      log('warn', 'could not save bar position', { error: String(err) });
+    }
+  }
+
+  /** The area a fixed element is placed in: the viewport less any scrollbars. */
+  function viewportSize() {
+    const root = document.documentElement;
+    return { width: root.clientWidth || window.innerWidth, height: root.clientHeight || window.innerHeight };
+  }
+
+  /** Put the bar's top-left corner at (left, top), kept wholly on screen. */
+  function placeBar(bar, left, top) {
+    const rect = bar.getBoundingClientRect();
+    const view = viewportSize();
+    const x = Math.round(Math.min(Math.max(0, left), Math.max(0, view.width - rect.width)));
+    const y = Math.round(Math.min(Math.max(0, top), Math.max(0, view.height - rect.height)));
+    applyBarPosition(bar, { top: `${y}px`, left: `${x}px`, right: 'auto', bottom: 'auto' });
+  }
+
+  /** Save where the bar now is, anchored to the nearest horizontal and vertical edges. */
+  function commitBarPosition(bar) {
+    const rect = bar.getBoundingClientRect();
+    const view = viewportSize();
+    const position = { top: 'auto', right: 'auto', bottom: 'auto', left: 'auto' };
+    if (rect.left + rect.width / 2 < view.width / 2) position.left = `${Math.round(rect.left)}px`;
+    else position.right = `${Math.round(view.width - rect.right)}px`;
+    if (rect.top + rect.height / 2 < view.height / 2) position.top = `${Math.round(rect.top)}px`;
+    else position.bottom = `${Math.round(view.height - rect.bottom)}px`;
+    saveBarPosition(position);
+    applyBarPosition(bar, position);
+    logMountResult('bar:moved', { position });
+  }
+
+  function resetBarPosition() {
+    saveBarPosition(null);
+    const bar = document.querySelector(`.${FLOATING_CLASS}`);
+    if (bar) applyBarPosition(bar, resolveBarPosition());
+  }
+
+  function onGripPointerDown(event) {
+    event.stopPropagation();
+    if (event.button !== 0) return;
+    const grip = event.currentTarget;
+    const bar = grip.closest(`.${FLOATING_CLASS}`);
+    if (!bar) return;
+    event.preventDefault();
+    grip.setPointerCapture?.(event.pointerId);
+    const rect = bar.getBoundingClientRect();
+    drag = { bar, x: event.clientX, y: event.clientY, left: rect.left, top: rect.top, moved: false };
+    bar.classList.add(DRAGGING_CLASS);
+  }
+
+  function onGripPointerMove(event) {
+    if (!drag) return;
+    const dx = event.clientX - drag.x;
+    const dy = event.clientY - drag.y;
+    // A click with a slight wobble isn't a move.
+    if (!drag.moved && Math.abs(dx) + Math.abs(dy) < 3) return;
+    drag.moved = true;
+    placeBar(drag.bar, drag.left + dx, drag.top + dy);
+  }
+
+  function onGripPointerUp() {
+    if (!drag) return;
+    const { bar, moved } = drag;
+    drag = null;
+    bar.classList.remove(DRAGGING_CLASS);
+    if (moved) commitBarPosition(bar);
+  }
+
+  const NUDGE_KEYS = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+
+  function onGripKeyDown(event) {
+    const step = NUDGE_KEYS[event.key];
+    if (!step) return;
+    // Keep the arrows from also seeking or scrolling the site's player.
+    event.preventDefault();
+    event.stopPropagation();
+    const bar = event.currentTarget.closest(`.${FLOATING_CLASS}`);
+    if (!bar) return;
+    const rect = bar.getBoundingClientRect();
+    placeBar(bar, rect.left + step[0] * GRIP_NUDGE_PX, rect.top + step[1] * GRIP_NUDGE_PX);
+    commitBarPosition(bar);
+  }
+
+  function createGrip() {
+    const grip = document.createElement('button');
+    grip.id = GRIP_ID;
+    grip.type = 'button';
+    grip.title = 'Drag to move · double-click to reset';
+    grip.setAttribute('aria-label', 'Move controls (arrow keys); double-click to reset');
+
+    // Two columns of three dots.
+    const NS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 6 14');
+    svg.setAttribute('aria-hidden', 'true');
+    for (const cx of [1, 5]) {
+      for (const cy of [2, 7, 12]) {
+        const dot = document.createElementNS(NS, 'circle');
+        dot.setAttribute('cx', String(cx));
+        dot.setAttribute('cy', String(cy));
+        dot.setAttribute('r', '1.2');
+        dot.setAttribute('fill', 'currentColor');
+        svg.appendChild(dot);
+      }
+    }
+    grip.appendChild(svg);
+
+    grip.addEventListener('pointerdown', onGripPointerDown);
+    grip.addEventListener('pointermove', onGripPointerMove);
+    grip.addEventListener('pointerup', onGripPointerUp);
+    grip.addEventListener('pointercancel', onGripPointerUp);
+    grip.addEventListener('lostpointercapture', onGripPointerUp);
+    grip.addEventListener('keydown', onGripKeyDown);
+    grip.addEventListener('dblclick', (event) => {
+      event.stopPropagation();
+      resetBarPosition();
+    });
+    // Keep the sites' own handlers from treating presses here as play/pause or a swipe.
+    for (const type of ['mousedown', 'click', 'touchstart']) {
+      grip.addEventListener(type, (event) => event.stopPropagation());
+    }
+    return grip;
   }
 
   // --- Floating Open button -------------------------------------------------
@@ -1111,7 +1372,7 @@
       return;
     }
 
-    preferredSpeed = await loadDefaultSpeed();
+    [preferredSpeed, savedBarPosition] = await Promise.all([loadDefaultSpeed(), loadBarPosition()]);
 
     dumpState();
     mountButton();

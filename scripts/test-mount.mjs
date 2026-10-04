@@ -204,7 +204,8 @@ async function main() {
       const page = await open(browser, 'https://www.youtube.com/shorts/abc123', SHORTS_PLAYER_DOM);
       const st = await state(page);
       expect('shorts: one bar', st.barCount, 1);
-      expect('shorts: Open + mute + speed + seek, in order', st.barContents, [
+      expect('shorts: grip + Open + mute + speed + seek, in order', st.barContents, [
+        'youtube-open-short-grip',
         'youtube-open-short-button',
         'youtube-open-short-mute',
         'youtube-open-short-speed',
@@ -217,6 +218,7 @@ async function main() {
       const page = await open(browser, 'https://www.facebook.com/reel/111', SHORTS_PLAYER_DOM);
       const st = await state(page);
       expect('reel: Open + mute + speed + seek share one bar', st.barContents, [
+        'youtube-open-short-grip',
         'youtube-open-short-button',
         'youtube-open-short-mute',
         'youtube-open-short-speed',
@@ -228,6 +230,7 @@ async function main() {
       const page = await open(browser, 'https://www.instagram.com/reels/111/', SHORTS_PLAYER_DOM);
       const st = await state(page);
       expect('instagram reel: Open + mute + speed + seek share one bar', st.barContents, [
+        'youtube-open-short-grip',
         'youtube-open-short-button',
         'youtube-open-short-mute',
         'youtube-open-short-speed',
@@ -239,7 +242,7 @@ async function main() {
       // The feed has no Open button, so the bar holds the slider alone.
       const page = await open(browser, 'https://www.facebook.com/', FEED_DOM);
       const st = await state(page);
-      expect('facebook feed: mute + slider + seek only', st.barContents, ['youtube-open-short-mute', 'youtube-open-short-speed', 'youtube-open-short-seek']);
+      expect('facebook feed: mute + slider + seek only', st.barContents, ['youtube-open-short-grip', 'youtube-open-short-mute', 'youtube-open-short-speed', 'youtube-open-short-seek']);
       expect('facebook feed: no Open button', st.href, null);
       await page.close();
     }
@@ -247,7 +250,7 @@ async function main() {
       // The Instagram feed has no Open button either, so the bar holds the slider alone.
       const page = await open(browser, 'https://www.instagram.com/', FEED_DOM);
       const st = await state(page);
-      expect('instagram feed: mute + slider + seek only', st.barContents, ['youtube-open-short-mute', 'youtube-open-short-speed', 'youtube-open-short-seek']);
+      expect('instagram feed: mute + slider + seek only', st.barContents, ['youtube-open-short-grip', 'youtube-open-short-mute', 'youtube-open-short-speed', 'youtube-open-short-seek']);
       expect('instagram feed: no Open button', st.href, null);
       await page.close();
     }
@@ -259,7 +262,7 @@ async function main() {
         <video id="thumb" style="width:50px;height:50px;position:fixed;top:0;left:0" muted></video>
       </body>`);
       const st = await state(page);
-      expect('tiktok: mute + slider + seek, no Open', st.barContents, ['youtube-open-short-mute', 'youtube-open-short-speed', 'youtube-open-short-seek']);
+      expect('tiktok: mute + slider + seek, no Open', st.barContents, ['youtube-open-short-grip', 'youtube-open-short-mute', 'youtube-open-short-speed', 'youtube-open-short-seek']);
       expect('tiktok: bar clears the top-right buttons', st.offset, { top: 72, right: 24 });
       expect('tiktok: drives the feed video, not the preview', await drivenVideoId(page), 'main');
       await page.close();
@@ -385,13 +388,14 @@ async function main() {
         const rect = (id) => document.getElementById(id).getBoundingClientRect();
         const bar = document.querySelector('.youtube-open-short-floating').getBoundingClientRect();
         const btn = rect('youtube-open-short-button');
+        const grip = rect('youtube-open-short-grip');
         const speed = rect('youtube-open-short-speed');
         const seek = rect('youtube-open-short-seek');
         return {
           secondRow: seek.top >= btn.bottom,
           // The bar is as wide as its first row (or the 252px floor), not both rows summed.
           barWidth: Math.round(bar.width),
-          firstRowWidth: Math.round(speed.right - btn.left) + 12,
+          firstRowWidth: Math.round(speed.right - grip.left) + 12,
           seekFillsRow: Math.round(seek.width) === Math.round(bar.width) - 12,
         };
       });
@@ -430,7 +434,7 @@ async function main() {
           const slider = document.querySelector('#youtube-open-short-seek input[type="range"]');
           return {
             t: document.getElementById('v1').currentTime,
-            readout: document.querySelector('.youtube-open-short-seek-readout').textContent,
+            readout: [...document.querySelectorAll('.youtube-open-short-seek-readout')].map((r) => r.textContent).join(' / '),
             max: slider.max,
             disabled: slider.disabled,
           };
@@ -482,9 +486,9 @@ async function main() {
       const page = await open(browser, 'https://www.instagram.com/', FEED_DOM);
       const st = await page.evaluate(() => ({
         disabled: document.querySelector('#youtube-open-short-seek input[type="range"]').disabled,
-        readout: document.querySelector('.youtube-open-short-seek-readout').textContent,
+        readout: [...document.querySelectorAll('.youtube-open-short-seek-readout')].map((r) => r.textContent).join(' / '),
       }));
-      expect('unknown duration disables the scrubber', st, { disabled: true, readout: '0:00' });
+      expect('unknown duration disables the scrubber', st, { disabled: true, readout: '0:00 / ' });
 
       const icons = await page.evaluate(() =>
         [...document.querySelectorAll('.youtube-open-short-seek-button')].map((b) => ({
@@ -661,6 +665,172 @@ async function main() {
       await page.waitForTimeout(400);
       const broken = await st();
       expect('unresponsive site toggle falls back to muted directly', { muted: broken.a.muted, pressed: broken.pressed }, { muted: false, pressed: 'false' });
+      await page.close();
+    }
+
+    console.log('Play/pause button:');
+    {
+      const page = await open(browser, 'https://www.facebook.com/', FEED_DOM);
+      // Stub videos carry no media to play; stand in for play()/pause() and their events.
+      await page.evaluate(() => {
+        for (const v of document.querySelectorAll('video')) {
+          let paused = true;
+          let ended = false;
+          Object.defineProperty(v, 'paused', { get: () => paused });
+          Object.defineProperty(v, 'ended', { get: () => ended });
+          v.play = () => {
+            paused = false;
+            ended = false;
+            v.dispatchEvent(new Event('play'));
+            return Promise.resolve();
+          };
+          v.pause = () => {
+            paused = true;
+            v.dispatchEvent(new Event('pause'));
+          };
+          v.finish = () => {
+            paused = true;
+            ended = true;
+            v.dispatchEvent(new Event('ended'));
+          };
+        }
+      });
+      const play = () =>
+        page.evaluate(() => {
+          const b = document.getElementById('youtube-open-short-play');
+          return {
+            label: b.getAttribute('aria-label'),
+            state: b.dataset.state,
+            v1: document.getElementById('v1').paused,
+            v2: document.getElementById('v2').paused,
+          };
+        });
+      const press = () => page.evaluate(() => document.getElementById('youtube-open-short-play').click());
+
+      const row = await page.evaluate(() =>
+        [...document.querySelector('.youtube-open-short-seek-row').children].map((c) => c.id || c.dataset.step)
+      );
+      expect('play sits between the back and forward buttons', row, ['-10', '-5', '-1', 'youtube-open-short-play', '1', '5', '10']);
+      expect('starts on Play for a paused video', await play(), { label: 'Play', state: 'paused', v1: true, v2: true });
+      await press();
+      expect('press plays the active video only', await play(), { label: 'Pause', state: 'playing', v1: false, v2: true });
+      await press();
+      expect('press again pauses it', await play(), { label: 'Play', state: 'paused', v1: true, v2: true });
+
+      await page.evaluate(() => document.getElementById('v1').play());
+      expect('follows the site starting playback', (await play()).state, 'playing');
+      await page.evaluate(() => document.getElementById('v1').finish());
+      expect('shows Replay once the video ends', await play(), { label: 'Replay', state: 'ended', v1: true, v2: true });
+      await page.evaluate(() => {
+        document.getElementById('v1').currentTime = 0.5; // pretend it got somewhere first
+      });
+      await press();
+      const replayed = await play();
+      expect('replay plays it again', replayed.state, 'playing');
+
+      // The next video autoplays or not as the site decides; the button just follows it.
+      await page.evaluate(() => window.scrollTo(0, 1180));
+      await nudge(page);
+      await page.waitForTimeout(400);
+      expect('follows the newly active video', await play(), { label: 'Play', state: 'paused', v1: false, v2: true });
+
+      const leaked = await page.evaluate(() => {
+        let hits = 0;
+        document.addEventListener('click', () => hits++);
+        document.getElementById('youtube-open-short-play').click();
+        return hits;
+      });
+      expect('clicks do not reach the page', leaked, 0);
+      await page.close();
+    }
+
+    console.log('Moving the bar:');
+    {
+      // Stands in for chrome.storage.local, already holding a spot for another site.
+      const STORAGE = `window.__store = { barPositions: { 'www.facebook.com': { top: '1px', left: '1px', right: 'auto', bottom: 'auto' } } };
+        window.chrome = { storage: { local: {
+          get: async (key) => ({ [key]: window.__store[key] }),
+          set: async (items) => { Object.assign(window.__store, JSON.parse(JSON.stringify(items))); },
+        } } };`;
+      const page = await open(browser, 'https://www.youtube.com/shorts/abc123', SHORTS_PLAYER_DOM, STORAGE);
+      const bar = () =>
+        page.evaluate(() => {
+          const el = document.querySelector('.youtube-open-short-floating');
+          const r = el.getBoundingClientRect();
+          const root = document.documentElement;
+          return {
+            left: Math.round(r.left),
+            top: Math.round(r.top),
+            right: Math.round(root.clientWidth - r.right),
+            bottom: Math.round(root.clientHeight - r.bottom),
+          };
+        });
+      const gripCentre = () =>
+        page.evaluate(() => {
+          const r = document.getElementById('youtube-open-short-grip').getBoundingClientRect();
+          return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+        });
+      const dragBy = async (dx, dy) => {
+        const g = await gripCentre();
+        await page.mouse.move(g.x, g.y);
+        await page.mouse.down();
+        await page.mouse.move(g.x + dx, g.y + dy, { steps: 5 });
+        await page.mouse.up();
+      };
+      const saved = () => page.evaluate(() => window.__store.barPositions);
+
+      const start = await bar();
+      expect('another site\'s saved spot is not used here', { top: start.top, right: start.right }, { top: 72, right: 24 });
+
+      await dragBy(-200, 300);
+      const moved = await bar();
+      expect('dragging moves the bar with the pointer', { dx: moved.left - start.left, dy: moved.top - start.top }, { dx: -200, dy: 300 });
+      expect('saved against the nearest edges, for this site only', await saved(), {
+        'www.facebook.com': { top: '1px', left: '1px', right: 'auto', bottom: 'auto' },
+        'www.youtube.com': { top: 'auto', right: `${moved.right}px`, bottom: `${moved.bottom}px`, left: 'auto' },
+      });
+
+      await nudge(page);
+      await page.waitForTimeout(200);
+      expect('a re-render keeps the moved spot', await bar(), moved);
+
+      await dragBy(-5000, 5000);
+      const clamped = await bar();
+      expect('dragging off screen stops at the edge', { left: clamped.left, bottom: clamped.bottom }, { left: 0, bottom: 0 });
+
+      await page.focus('#youtube-open-short-grip');
+      await page.keyboard.press('ArrowRight');
+      await page.keyboard.press('ArrowUp');
+      const nudged = await bar();
+      expect('arrow keys nudge it', { left: nudged.left, bottom: nudged.bottom }, { left: 10, bottom: 10 });
+
+      const leaked = await page.evaluate(() => {
+        let hits = 0;
+        document.addEventListener('click', () => hits++);
+        document.getElementById('youtube-open-short-grip').click();
+        return hits;
+      });
+      expect('clicks on the grip do not reach the page', leaked, 0);
+
+      const g = await gripCentre();
+      await page.mouse.dblclick(g.x, g.y);
+      await page.waitForTimeout(50);
+      expect('double-click puts it back', await bar(), start);
+      expect('...and forgets this site\'s spot', Object.keys(await saved()), ['www.facebook.com']);
+      await page.close();
+    }
+    {
+      // A spot saved earlier is where the bar first appears.
+      const STORAGE = `window.chrome = { storage: { local: {
+          get: async () => ({ barPositions: { 'www.youtube.com': { top: 'auto', right: 'auto', bottom: '40px', left: '30px' } } }),
+          set: async () => {},
+        } } };`;
+      const page = await open(browser, 'https://www.youtube.com/shorts/abc123', SHORTS_PLAYER_DOM, STORAGE);
+      const spot = await page.evaluate(() => {
+        const r = document.querySelector('.youtube-open-short-floating').getBoundingClientRect();
+        return { left: Math.round(r.left), bottom: Math.round(document.documentElement.clientHeight - r.bottom) };
+      });
+      expect('opens where it was left', spot, { left: 30, bottom: 40 });
       await page.close();
     }
 

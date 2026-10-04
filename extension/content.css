@@ -1,8 +1,9 @@
 /* Shared floating bar — holds the "Open" button and, where the player has no usable
-   control bar of its own, the mute button, speed slider, and seek controls. Pages that show several
-   (Shorts, Reels) get a single panel rather than overlapping controls; the seek
-   controls wrap onto a second row.
-   Offsets come from `position` in sites.config.js via --yos-* custom properties. */
+   control bar of its own, the mute button, speed slider, and seek controls (with
+   play/pause in the middle). Pages that show several (Shorts, Reels) get a single
+   panel rather than overlapping controls; the seek controls wrap onto a second row.
+   Offsets come from `position` in sites.config.js, or from where the user dragged the
+   grip, via --yos-* custom properties. */
 .youtube-open-short-floating {
   position: fixed;
   top: var(--yos-top, 72px);
@@ -34,6 +35,59 @@
 .youtube-open-short-floating > * + * {
   border-left: 1px solid rgba(255, 255, 255, 0.22);
   padding-left: 8px;
+}
+
+/* The grip already marks the bar's edge; no separator after it. */
+.youtube-open-short-floating > #youtube-open-short-grip + * {
+  border-left: none;
+}
+
+.youtube-open-short-floating.youtube-open-short-dragging,
+.youtube-open-short-floating.youtube-open-short-dragging * {
+  cursor: grabbing !important;
+  user-select: none;
+}
+
+/* Drag handle at the start of the bar. The auto margin holds it at the left edge when
+   the seek row makes the bar wider than its first row. */
+#youtube-open-short-grip {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 14px;
+  height: 28px;
+  margin: 0 auto 0 0;
+  padding: 0;
+  box-sizing: border-box;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.5);
+  cursor: grab;
+  touch-action: none;
+  opacity: 1 !important;
+  visibility: visible !important;
+  pointer-events: auto !important;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+#youtube-open-short-grip svg {
+  display: block;
+  width: 6px;
+  height: 14px;
+}
+
+#youtube-open-short-grip:hover,
+#youtube-open-short-grip:focus-visible,
+.youtube-open-short-dragging #youtube-open-short-grip {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+#youtube-open-short-grip:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 1px;
 }
 
 #youtube-open-short-button {
@@ -103,7 +157,8 @@
 }
 
 .youtube-open-short-seek-button,
-#youtube-open-short-mute {
+#youtube-open-short-mute,
+#youtube-open-short-play {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -128,8 +183,10 @@
   width: auto;
 }
 
-/* Sits in the first row beside the speed slider, so it matches the Open button's height. */
-#youtube-open-short-mute {
+/* Mute sits in the first row beside the speed slider, so it matches the Open button's
+   height; play/pause, the main control in the seek row, gets the same size. */
+#youtube-open-short-mute,
+#youtube-open-short-play {
   width: 28px;
   height: 28px;
   padding: 0;
@@ -145,7 +202,8 @@
   padding-left: 0;
 }
 
-#youtube-open-short-mute svg {
+#youtube-open-short-mute svg,
+#youtube-open-short-play svg {
   display: block;
   width: 18px;
   height: 18px;
@@ -154,27 +212,42 @@
 .youtube-open-short-seek-button:hover,
 .youtube-open-short-seek-button:focus-visible,
 #youtube-open-short-mute:hover,
-#youtube-open-short-mute:focus-visible {
+#youtube-open-short-mute:focus-visible,
+#youtube-open-short-play:hover,
+#youtube-open-short-play:focus-visible {
   background: rgba(255, 255, 255, 0.16);
 }
 
 .youtube-open-short-seek-button:focus-visible,
-#youtube-open-short-mute:focus-visible {
+#youtube-open-short-mute:focus-visible,
+#youtube-open-short-play:focus-visible {
   outline: 2px solid #fff;
   outline-offset: 1px;
 }
 
+/* Position and length either side of the scrubber. */
+.youtube-open-short-scrub-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .youtube-open-short-seek-readout {
-  flex: 1 1 auto;
+  flex: 0 0 auto;
+  min-width: 2.8em;
   font-family: Roboto, Arial, sans-serif;
   font-size: 12px;
   font-weight: 500;
   font-variant-numeric: tabular-nums;
   line-height: 1;
   color: #fff;
-  text-align: center;
+  text-align: left;
   white-space: nowrap;
   user-select: none;
+}
+
+.youtube-open-short-seek-duration {
+  text-align: right;
 }
 
 #youtube-open-short-seek input[type='range']:disabled {

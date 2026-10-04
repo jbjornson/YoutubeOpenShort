@@ -90,6 +90,8 @@ const state = (page) =>
       })(),
       speedMounted: Boolean(document.getElementById('youtube-open-short-speed')),
       speedBefore: document.getElementById('youtube-open-short-speed')?.nextElementSibling?.className || null,
+      seekMounted: Boolean(document.getElementById('youtube-open-short-seek')),
+      muteMounted: Boolean(document.getElementById('youtube-open-short-mute')),
       // Order of widgets inside the shared floating bar.
       barContents: [...(document.querySelector('.youtube-open-short-floating')?.children || [])].map(
         (c) => c.id || c.tagName.toLowerCase()
@@ -134,6 +136,7 @@ async function main() {
       ['https://www.instagram.com/', PLAIN, null, false, null],
       ['https://www.youtube.com/watch?v=abc123', WATCH_DOM, null, true, null],
       ['https://www.youtube.com/feed/subscriptions', PLAIN, null, false, null],
+      ['https://www.tiktok.com/@someone/video/7123456789', PLAIN, null, false, null],
     ]) {
       const page = await open(browser, url, body);
       const s = await state(page);
@@ -144,6 +147,9 @@ async function main() {
         expect(`${url} position`, s.offset, wantOffset);
       }
       if (wantSpeed) expect(`${url} slider sits before the cog`, s.speedBefore, 'ytp-settings-button');
+      // Seek controls are floating-bar only; the watch page keeps YouTube's own.
+      expect(`${url} seek controls`, s.seekMounted, false);
+      expect(`${url} mute button`, s.muteMounted, false);
       await page.close();
     }
 
@@ -198,9 +204,11 @@ async function main() {
       const page = await open(browser, 'https://www.youtube.com/shorts/abc123', SHORTS_PLAYER_DOM);
       const st = await state(page);
       expect('shorts: one bar', st.barCount, 1);
-      expect('shorts: Open + speed, in order', st.barContents, [
+      expect('shorts: Open + mute + speed + seek, in order', st.barContents, [
         'youtube-open-short-button',
+        'youtube-open-short-mute',
         'youtube-open-short-speed',
+        'youtube-open-short-seek',
       ]);
       expect('shorts: picker ignores the 0x0 decoy', await drivenVideoId(page), 'real');
       await page.close();
@@ -208,18 +216,22 @@ async function main() {
     {
       const page = await open(browser, 'https://www.facebook.com/reel/111', SHORTS_PLAYER_DOM);
       const st = await state(page);
-      expect('reel: Open + speed share one bar', st.barContents, [
+      expect('reel: Open + mute + speed + seek share one bar', st.barContents, [
         'youtube-open-short-button',
+        'youtube-open-short-mute',
         'youtube-open-short-speed',
+        'youtube-open-short-seek',
       ]);
       await page.close();
     }
     {
       const page = await open(browser, 'https://www.instagram.com/reels/111/', SHORTS_PLAYER_DOM);
       const st = await state(page);
-      expect('instagram reel: Open + speed share one bar', st.barContents, [
+      expect('instagram reel: Open + mute + speed + seek share one bar', st.barContents, [
         'youtube-open-short-button',
+        'youtube-open-short-mute',
         'youtube-open-short-speed',
+        'youtube-open-short-seek',
       ]);
       await page.close();
     }
@@ -227,7 +239,7 @@ async function main() {
       // The feed has no Open button, so the bar holds the slider alone.
       const page = await open(browser, 'https://www.facebook.com/', FEED_DOM);
       const st = await state(page);
-      expect('facebook feed: slider only', st.barContents, ['youtube-open-short-speed']);
+      expect('facebook feed: mute + slider + seek only', st.barContents, ['youtube-open-short-mute', 'youtube-open-short-speed', 'youtube-open-short-seek']);
       expect('facebook feed: no Open button', st.href, null);
       await page.close();
     }
@@ -235,8 +247,21 @@ async function main() {
       // The Instagram feed has no Open button either, so the bar holds the slider alone.
       const page = await open(browser, 'https://www.instagram.com/', FEED_DOM);
       const st = await state(page);
-      expect('instagram feed: slider only', st.barContents, ['youtube-open-short-speed']);
+      expect('instagram feed: mute + slider + seek only', st.barContents, ['youtube-open-short-mute', 'youtube-open-short-speed', 'youtube-open-short-seek']);
       expect('instagram feed: no Open button', st.href, null);
+      await page.close();
+    }
+    {
+      // TikTok gets the controls but no Open button, at its own offset. The feed keeps
+      // a small muted preview <video> beside the real one, like Shorts' decoy.
+      const page = await open(browser, 'https://www.tiktok.com/foryou', `<body style="background:#111;margin:0">
+        <video id="main" style="width:414px;height:736px;display:block" muted></video>
+        <video id="thumb" style="width:50px;height:50px;position:fixed;top:0;left:0" muted></video>
+      </body>`);
+      const st = await state(page);
+      expect('tiktok: mute + slider + seek, no Open', st.barContents, ['youtube-open-short-mute', 'youtube-open-short-speed', 'youtube-open-short-seek']);
+      expect('tiktok: bar clears the top-right buttons', st.offset, { top: 72, right: 24 });
+      expect('tiktok: drives the feed video, not the preview', await drivenVideoId(page), 'main');
       await page.close();
     }
     {
@@ -245,6 +270,7 @@ async function main() {
       const st = await state(page);
       expect('facebook page with no video: no bar', st.barCount, 0);
       expect('facebook page with no video: no slider', st.speedMounted, false);
+      expect('facebook page with no video: no seek', st.seekMounted, false);
       await page.close();
     }
     {
@@ -349,6 +375,292 @@ async function main() {
       expect('slider minimum is 0.5', slow.min, '0.5');
       expect('slow motion reaches 0.5x', slow.playbackRate, 0.5);
       expect('readout shows 0.5\u00d7', slow.readout, '0.5\u00d7');
+      await page.close();
+    }
+
+    console.log('Seek controls:');
+    {
+      const page = await open(browser, 'https://www.youtube.com/shorts/abc123', SHORTS_PLAYER_DOM);
+      const layout = await page.evaluate(() => {
+        const rect = (id) => document.getElementById(id).getBoundingClientRect();
+        const bar = document.querySelector('.youtube-open-short-floating').getBoundingClientRect();
+        const btn = rect('youtube-open-short-button');
+        const speed = rect('youtube-open-short-speed');
+        const seek = rect('youtube-open-short-seek');
+        return {
+          secondRow: seek.top >= btn.bottom,
+          // The bar is as wide as its first row (or the 252px floor), not both rows summed.
+          barWidth: Math.round(bar.width),
+          firstRowWidth: Math.round(speed.right - btn.left) + 12,
+          seekFillsRow: Math.round(seek.width) === Math.round(bar.width) - 12,
+        };
+      });
+      console.log('       layout', JSON.stringify(layout));
+      expect('shorts: seek controls sit on a second row', layout.secondRow, true);
+      expect('shorts: bar width follows the first row', layout.barWidth, Math.max(252, layout.firstRowWidth));
+      expect('shorts: seek row fills the bar', layout.seekFillsRow, true);
+      await page.close();
+    }
+    {
+      // A feed has no Open button; the bar still leaves the seek row its 240px.
+      const page = await open(browser, 'https://www.instagram.com/', FEED_DOM);
+      const width = await page.evaluate(() => Math.round(document.getElementById('youtube-open-short-seek').getBoundingClientRect().width));
+      expect('feed: seek row gets at least 240px', width >= 240, true);
+      await page.close();
+    }
+    {
+      const page = await open(browser, 'https://www.facebook.com/', FEED_DOM);
+      // Stub videos carry no media; give each one a duration and a settable position.
+      await page.evaluate(() => {
+        for (const v of document.querySelectorAll('video')) {
+          let t = 0;
+          Object.defineProperty(v, 'duration', { get: () => 125 });
+          Object.defineProperty(v, 'currentTime', {
+            get: () => t,
+            set: (x) => {
+              t = x;
+              v.dispatchEvent(new Event('timeupdate'));
+            },
+          });
+          v.dispatchEvent(new Event('durationchange'));
+        }
+      });
+      const read = () =>
+        page.evaluate(() => {
+          const slider = document.querySelector('#youtube-open-short-seek input[type="range"]');
+          return {
+            t: document.getElementById('v1').currentTime,
+            readout: document.querySelector('.youtube-open-short-seek-readout').textContent,
+            max: slider.max,
+            disabled: slider.disabled,
+          };
+        });
+      const click = (step) =>
+        page.evaluate((s) => document.querySelector(`.youtube-open-short-seek-button[data-step="${s}"]`).click(), step);
+
+      expect('scrubber spans the duration', await read(), { t: 0, readout: '0:00 / 2:05', max: '125', disabled: false });
+      await click(10);
+      await click(5);
+      await click(-1);
+      expect('+10 +5 -1 lands at 14s', (await read()).t, 14);
+      expect('readout follows', (await read()).readout, '0:14 / 2:05');
+      await click(-10);
+      await click(-10);
+      expect('seeking back clamps at 0', (await read()).t, 0);
+      await page.evaluate(() => {
+        document.getElementById('v1').currentTime = 122;
+      });
+      await click(10);
+      expect('seeking forward clamps at the end', (await read()).t, 125);
+
+      await page.evaluate(() => {
+        const slider = document.querySelector('#youtube-open-short-seek input[type="range"]');
+        slider.value = '60';
+        slider.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      expect('scrubber seeks', (await read()).t, 60);
+
+      const leaked = await page.evaluate(() => {
+        let hits = 0;
+        document.addEventListener('click', () => hits++);
+        document.querySelector('.youtube-open-short-seek-button[data-step="-10"]').click();
+        return hits;
+      });
+      expect('clicks do not reach the page', leaked, 0);
+      expect('...but still seek (60 -> 50)', (await read()).t, 50);
+
+      await page.evaluate(() => window.scrollTo(0, 1180));
+      await nudge(page);
+      await page.waitForTimeout(400);
+      await click(5);
+      const after = await page.evaluate(() => ['v1', 'v2'].map((id) => document.getElementById(id).currentTime));
+      expect('after scrolling, seek drives the next video', after, [50, 5]);
+      await page.close();
+    }
+    {
+      // No media loaded: nothing to scrub yet.
+      const page = await open(browser, 'https://www.instagram.com/', FEED_DOM);
+      const st = await page.evaluate(() => ({
+        disabled: document.querySelector('#youtube-open-short-seek input[type="range"]').disabled,
+        readout: document.querySelector('.youtube-open-short-seek-readout').textContent,
+      }));
+      expect('unknown duration disables the scrubber', st, { disabled: true, readout: '0:00' });
+
+      const icons = await page.evaluate(() =>
+        [...document.querySelectorAll('.youtube-open-short-seek-button')].map((b) => ({
+          step: b.dataset.step,
+          text: b.textContent,
+          chevrons: b.querySelectorAll('svg path').length,
+          label: b.getAttribute('aria-label'),
+        }))
+      );
+      expect('seek buttons are chevron icons, labelled for tooltips', icons, [
+        { step: '-10', text: '', chevrons: 3, label: 'Back 10 seconds' },
+        { step: '-5', text: '', chevrons: 2, label: 'Back 5 seconds' },
+        { step: '-1', text: '', chevrons: 1, label: 'Back 1 second' },
+        { step: '1', text: '', chevrons: 1, label: 'Forward 1 second' },
+        { step: '5', text: '', chevrons: 2, label: 'Forward 5 seconds' },
+        { step: '10', text: '', chevrons: 3, label: 'Forward 10 seconds' },
+      ]);
+      await page.close();
+    }
+
+    console.log('Mute button:');
+    {
+      // FEED_DOM videos start muted, as autoplaying feed video does.
+      const page = await open(browser, 'https://www.instagram.com/', FEED_DOM);
+      const mute = () =>
+        page.evaluate(() => {
+          const b = document.getElementById('youtube-open-short-mute');
+          const v = (id) => document.getElementById(id);
+          return {
+            pressed: b.getAttribute('aria-pressed'),
+            label: b.getAttribute('aria-label'),
+            v1: v('v1').muted,
+            v2: v('v2').muted,
+            v3: v('v3').muted,
+          };
+        });
+      const scrollTo = async (y) => {
+        await page.evaluate((top) => window.scrollTo(0, top), y);
+        await nudge(page);
+        await page.waitForTimeout(400);
+      };
+
+      expect('untouched until pressed', await mute(), { pressed: 'true', label: 'Unmute', v1: true, v2: true, v3: true });
+
+      await page.evaluate(() => {
+        document.getElementById('v1').volume = 0;
+        document.getElementById('youtube-open-short-mute').click();
+      });
+      await page.waitForTimeout(50);
+      expect('press unmutes the active video', await mute(), { pressed: 'false', label: 'Mute', v1: false, v2: true, v3: true });
+      expect('unmuting at zero volume restores volume', await page.evaluate(() => document.getElementById('v1').volume), 1);
+
+      await scrollTo(1180);
+      expect('unmute carries to the next video', (await mute()).v2, false);
+
+      // The site re-muting a freshly-active video is corrected.
+      await page.evaluate(() => {
+        document.getElementById('v2').muted = true;
+      });
+      await page.waitForTimeout(100);
+      expect('a site reset right after switching is undone', (await mute()).v2, false);
+
+      // Later, a change is the user tapping the site's own control, and is adopted.
+      await page.waitForTimeout(1600);
+      await page.evaluate(() => {
+        document.getElementById('v2').muted = true;
+        document.getElementById('v3').muted = false;
+      });
+      await page.waitForTimeout(100);
+      const adopted = await mute();
+      expect('native mute is adopted, not fought', { v2: adopted.v2, pressed: adopted.pressed }, { v2: true, pressed: 'true' });
+      await scrollTo(2360);
+      expect('the adopted choice carries on', (await mute()).v3, true);
+
+      // Long after v3 became active, a loop restarts it and the site re-applies its own
+      // sound setting; the user's choice must survive every way a loop can show up.
+      await page.evaluate(() => document.getElementById('youtube-open-short-mute').click());
+      for (const how of ['seeking', 'play', 'wrap']) {
+        // Outlast the previous grace window, so each kind of loop has to be detected itself.
+        await page.waitForTimeout(1600);
+        await page.evaluate((kind) => {
+          const v = document.getElementById('v3');
+          if (kind === 'wrap') {
+            // Playhead jumps from near the end back to the start between timeupdates.
+            let t = 12;
+            Object.defineProperty(v, 'currentTime', { configurable: true, get: () => t, set: (x) => { t = x; } });
+            v.dispatchEvent(new Event('timeupdate'));
+            t = 0.1;
+            v.dispatchEvent(new Event('timeupdate'));
+          } else {
+            v.dispatchEvent(new Event(kind));
+          }
+          v.muted = true; // the site's reset as the loop starts
+        }, how);
+        await page.waitForTimeout(100);
+        const st = await mute();
+        expect(`loop via ${how} keeps the chosen unmute`, { v3: st.v3, pressed: st.pressed }, { v3: false, pressed: 'false' });
+      }
+
+      const leaked = await page.evaluate(() => {
+        let hits = 0;
+        document.addEventListener('click', () => hits++);
+        document.getElementById('youtube-open-short-mute').click();
+        return hits;
+      });
+      expect('clicks do not reach the page', leaked, 0);
+      await page.close();
+    }
+
+    console.log('Mute through the site\'s own control:');
+    {
+      // Two reels, each with its own Instagram-style mute toggle (a role=button inside
+      // the volume slider). Like the real sites, a toggle changes its video's sound a
+      // moment after the click and keeps the site's own idea of muted in data-site-muted.
+      const NATIVE_DOM = `<body style="background:#111;margin:0">
+        ${['a', 'b']
+          .map(
+            (id) => `<div class="reel" style="height:760px"><div><div>
+              <video id="${id}" style="width:400px;height:700px;display:block" muted></video>
+              <div role="slider"><div><div role="button" id="native-${id}" data-site-muted="true" data-clicks="0"></div></div></div>
+            </div></div></div>`
+          )
+          .join('')}
+        <script>
+          for (const b of document.querySelectorAll('[id^=native-]')) {
+            b.addEventListener('click', () => {
+              if (b.dataset.broken) return;
+              b.dataset.clicks = String(Number(b.dataset.clicks) + 1);
+              const muted = b.dataset.siteMuted !== 'true';
+              b.dataset.siteMuted = String(muted);
+              setTimeout(() => { document.getElementById(b.id.slice(7)).muted = muted; }, 30);
+            });
+          }
+        </script>
+      </body>`;
+      const page = await open(browser, 'https://www.instagram.com/reels/', NATIVE_DOM);
+      const st = () =>
+        page.evaluate(() => {
+          const one = (id) => ({
+            muted: document.getElementById(id).muted,
+            site: document.getElementById(`native-${id}`).dataset.siteMuted === 'true',
+            clicks: Number(document.getElementById(`native-${id}`).dataset.clicks),
+          });
+          return { a: one('a'), b: one('b'), pressed: document.getElementById('youtube-open-short-mute').getAttribute('aria-pressed') };
+        });
+      const press = () => page.evaluate(() => document.getElementById('youtube-open-short-mute').click());
+
+      await press();
+      await page.waitForTimeout(400);
+      expect('unmute presses the active reel\'s own toggle, not its neighbour\'s', await st(), {
+        a: { muted: false, site: false, clicks: 1 },
+        b: { muted: true, site: true, clicks: 0 },
+        pressed: 'false',
+      });
+
+      // The site re-applying its own state (as on a loop) now agrees with the user.
+      await page.waitForTimeout(1600);
+      await page.evaluate(() => {
+        const v = document.getElementById('a');
+        v.muted = document.getElementById('native-a').dataset.siteMuted === 'true';
+      });
+      await page.waitForTimeout(100);
+      expect('site re-applying its own state keeps the sound on', (await st()).a, { muted: false, site: false, clicks: 1 });
+
+      await press();
+      await page.waitForTimeout(400);
+      expect('muting goes through the site too', (await st()).a, { muted: true, site: true, clicks: 2 });
+
+      // A toggle that doesn't respond: fall back to setting muted directly.
+      await page.evaluate(() => {
+        document.getElementById('native-a').dataset.broken = '1';
+      });
+      await press();
+      await page.waitForTimeout(400);
+      const broken = await st();
+      expect('unresponsive site toggle falls back to muted directly', { muted: broken.a.muted, pressed: broken.pressed }, { muted: false, pressed: 'false' });
       await page.close();
     }
 
